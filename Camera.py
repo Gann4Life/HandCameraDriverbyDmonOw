@@ -95,7 +95,8 @@ class HandTracker:
             memory_seconds=float(identity_config.get('memory_seconds', 0.4)),
             switch_frames=int(identity_config.get('switch_frames', 6)),
             duplicate_radius=float(identity_config.get('duplicate_radius', 0.05)),
-            user_left_is_image_left=not self.mirror_x)
+            user_left_is_image_left=not self.mirror_x,
+            order_weight=float(identity_config.get('order_weight', 1.5)))
 
         # Initialize MediaPipe Hands
         self.mp_hands = mp.solutions.hands
@@ -353,15 +354,24 @@ class HandTracker:
         This frame's left/right vote for one hand, in [-1, 1] (> 0 is left).
         Only a vote: HandIdentityTracker weighs it against continuity.
 
-        Seen from behind (POV), the hand's own shape is a far better signal
-        than MediaPipe's label, which assumes a palm-side selfie view.
+        Finger curl leads: fingers only bend toward the palm, so it holds for
+        any hand rotation. The secondary signal assumes which side faces the
+        camera (palm-away geometry in POV, MediaPipe's selfie label otherwise),
+        so it inverts when the hand turns over; it only gets a small weight,
+        enough to decide a flat hand but never to outvote a clear curl.
         """
-        if self.palm_away and hand_world_landmarks is not None:
-            world = [(lm.x, lm.y, lm.z) for lm in hand_world_landmarks.landmark]
-            return self.gesture_detector.handedness_evidence_palm_away(world, self.mirror_x, self.flip_z)
         classification = handedness.classification[0]
-        is_left = (classification.label == "Left") != self.swap_hands
-        return classification.score if is_left else -classification.score
+        mp_is_left = (classification.label == "Left") != self.swap_hands
+        mp_vote = classification.score if mp_is_left else -classification.score
+        if hand_world_landmarks is None:
+            return mp_vote
+        world = [(lm.x, lm.y, lm.z) for lm in hand_world_landmarks.landmark]
+        curl = self.gesture_detector.handedness_evidence_curl(world)
+        if self.palm_away:
+            secondary = self.gesture_detector.handedness_evidence_palm_away(world, self.mirror_x, self.flip_z)
+        else:
+            secondary = mp_vote
+        return max(-1.0, min(1.0, 0.8 * curl + 0.2 * secondary))
 
     def process_hand_landmarks(self, hand_landmarks, hand_world_landmarks, hand_type: str,
                                frame_width: int, frame_height: int) -> HandData:
@@ -412,9 +422,12 @@ class HandTracker:
 
         # Calculate hand orientation from the metric world landmarks; the
         # normalised ones have a squashed, image-relative Z and unequal X/Y scales.
+        # The palm side comes from the hand's chirality (is_left, now stable
+        # over time), not from assuming which side faces the camera, so a hand
+        # turned palm-to-camera keeps the right orientation.
         if world is not None:
             rotation = self.gesture_detector.calculate_hand_orientation(world, is_left, self.mirror_x,
-                                                                        self.palm_away, self.flip_z)
+                                                                        palm_away=False, flip_z=self.flip_z)
             rotation = quat_multiply(self.camera_rotation, rotation)
             rotation = quat_multiply(rotation, self.rotation_offsets[hand_type])
             rotation = self.rotation_filters[hand_type](rotation, now)
@@ -600,8 +613,12 @@ class HandTracker:
                         print("\nQuitting...")
                         break
                     if key == ord('s'):
+                        # Manual correction: exchange the current identities now
+                        # (and flip MediaPipe's label vote, its only other input)
                         self.swap_hands = not self.swap_hands
-                        print(f"Hands {'swapped' if self.swap_hands else 'as detected'}")
+                        self.hand_identity.swap()
+                        self.build_filters()  # each hand's history belonged to the other
+                        print("Hands swapped")
                     if key == ord('f'):
                         self.cycle_filter_mode()
 

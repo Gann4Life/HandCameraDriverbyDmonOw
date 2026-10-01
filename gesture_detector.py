@@ -317,9 +317,9 @@ class GestureDetector:
         forward = (pts[self.INDEX_FINGER_MCP] + pts[self.MIDDLE_FINGER_MCP] +
                    pts[self.RING_FINGER_MCP] + pts[self.PINKY_MCP]) / 4.0 - pts[self.WRIST]
         across = pts[self.INDEX_FINGER_MCP] - pts[self.PINKY_MCP]
-        # MediaPipe's axes (x right, y down, z away) are left-handed, so this
-        # order gives the back-of-hand normal of a right hand
-        dorsal_if_right = np.cross(across, forward)
+        # In MediaPipe's axes (x right, y down, z away) this order gives the
+        # back-of-hand normal of a right hand (checked against synthetic hands)
+        dorsal_if_right = np.cross(forward, across)
         norm = np.linalg.norm(dorsal_if_right)
         if norm < 1e-9:
             return 0.0

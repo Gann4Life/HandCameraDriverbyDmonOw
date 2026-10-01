@@ -33,7 +33,8 @@ class HandIdentityTracker:
 
     def __init__(self, continuity_radius: float = 0.15, memory_seconds: float = 0.4,
                  switch_frames: int = 6, duplicate_radius: float = 0.05,
-                 strong_evidence: float = 0.5, user_left_is_image_left: bool = True):
+                 strong_evidence: float = 0.5, user_left_is_image_left: bool = True,
+                 order_weight: float = 1.5, order_full_separation: float = 0.2):
         """
         Args:
             continuity_radius: Max wrist movement between frames (fraction of the
@@ -43,8 +44,11 @@ class HandIdentityTracker:
                 before a continuing hand is allowed to change side
             duplicate_radius: Detections closer than this are one hand seen twice
             strong_evidence: |evidence| above which a vote counts as a contradiction
-            user_left_is_image_left: Which image side the user's left hand is on,
-                used only when nothing else can decide
+            user_left_is_image_left: Which image side the user's left hand is on
+            order_weight: How strongly two separated hands are assigned by
+                left-right order (0 disables it)
+            order_full_separation: Horizontal gap (fraction of the image) at
+                which the order prior reaches full weight
         """
         self.continuity_radius = continuity_radius
         self.memory_seconds = memory_seconds
@@ -52,6 +56,8 @@ class HandIdentityTracker:
         self.duplicate_radius = duplicate_radius
         self.strong_evidence = strong_evidence
         self.user_left_is_image_left = user_left_is_image_left
+        self.order_weight = order_weight
+        self.order_full_separation = order_full_separation
         self._tracks: Dict[str, _Track] = {}
 
     @staticmethod
@@ -61,10 +67,14 @@ class HandIdentityTracker:
     def _recent_tracks(self, now: float) -> Dict[str, _Track]:
         return {side: t for side, t in self._tracks.items() if now - t.time <= self.memory_seconds}
 
+    # Below this, a newly appearing hand is placed by image side instead: a weak
+    # vote is typically a flat hand whose secondary signal may be inverted
+    WEAK_EVIDENCE = 0.3
+
     def _side_from_evidence(self, det: HandDetection) -> str:
-        if det.evidence > 0:
+        if det.evidence >= self.WEAK_EVIDENCE:
             return "left"
-        if det.evidence < 0:
+        if det.evidence <= -self.WEAK_EVIDENCE:
             return "right"
         on_image_left = det.wrist[0] < 0.5
         return "left" if on_image_left == self.user_left_is_image_left else "right"
@@ -89,13 +99,32 @@ class HandIdentityTracker:
     def _assign_pair(self, a: HandDetection, b: HandDetection, recent: Dict[str, _Track]) -> Tuple[str, str]:
         def cost(det: HandDetection, side: str) -> float:
             track = recent.get(side)
-            # Continuity dominates; an unknown track costs a neutral amount
+            # An unknown track costs a neutral amount
             continuity = min(self._distance(det.wrist, track.wrist), 0.5) if track else 0.25
             vote = -det.evidence if side == "left" else det.evidence
-            return continuity + 0.15 * vote
-        straight = cost(a, "left") + cost(b, "right")
-        swapped = cost(a, "right") + cost(b, "left")
+            return continuity + 0.3 * vote
+
+        def order_cost(left: HandDetection, right: HandDetection) -> float:
+            # With both hands in view and clearly apart, the left hand is on
+            # the user's left. This is what lets a pair that got swapped
+            # correct itself: continuity alone would keep the swap forever.
+            # Crossed arms held apart are the price.
+            dx = right.wrist[0] - left.wrist[0]
+            if not self.user_left_is_image_left:
+                dx = -dx
+            separation = min(abs(dx) / self.order_full_separation, 1.0)
+            return self.order_weight * separation if dx < 0 else 0.0
+
+        straight = cost(a, "left") + cost(b, "right") + order_cost(a, b)
+        swapped = cost(a, "right") + cost(b, "left") + order_cost(b, a)
         return ("left", "right") if straight <= swapped else ("right", "left")
+
+    def swap(self):
+        """Exchange the two identities, as a manual correction."""
+        left, right = self._tracks.get("left"), self._tracks.get("right")
+        self._tracks = {side: track for side, track in (("left", right), ("right", left)) if track is not None}
+        for track in self._tracks.values():
+            track.contradictions = 0
 
     def assign(self, detections: List[HandDetection], now: float) -> Dict[int, str]:
         """

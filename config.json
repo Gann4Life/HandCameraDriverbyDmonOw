@@ -25,7 +25,8 @@
       "continuity_radius": 0.15,
       "memory_seconds": 0.4,
       "switch_frames": 6,
-      "duplicate_radius": 0.05
+      "duplicate_radius": 0.05,
+      "order_weight": 1.5
     }
   },
   "process": {
@@ -55,8 +56,8 @@
       "position_offset": [0.0, 0.0, 0.0],
       "camera_rotation_deg": [0.0, 0.0, 0.0],
       "rotation_offset_deg": {
-        "left": [-45.0, 0.0, -127.0],
-        "right": [-45.0, 0.0, 127.0]
+        "left": [0.0, 0.0, -127.0],
+        "right": [0.0, 0.0, 127.0]
       }
     },
     "facing": {
