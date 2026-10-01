@@ -1,16 +1,24 @@
 {
   "camera": {
-    "device_id": 0,
+    "device_id": 1,
     "width": 640,
     "height": 480,
-    "fps": 60,
-    "flip_horizontal": true
+    "fps": 30,
+    "flip_horizontal": false,
+    "source_mirrored": false,
+    "backend": "auto",
+    "rotate_180": false,
+    "stall_timeout": 2.0,
+    "reconnect_timeout": 30.0
   },
   "tracking": {
     "max_hands": 2,
     "detection_confidence": 0.7,
     "tracking_confidence": 0.5,
-    "model_complexity": 1
+    "model_complexity": 1,
+    "view_mode": "pov",
+    "palm_facing": "away",
+    "swap_hands": false
   },
   "network": {
     "host": "127.0.0.1",
@@ -22,7 +30,13 @@
   },
   "calibration": {
     "position_offset": [0.0, 0.0, 0.0],
-    "scale": 1.0
+    "scale": 1.0,
+    "camera_rotation_deg": [0.0, 0.0, 0.0],
+    "rotation_offset_deg": {
+      "left": [0.0, 0.0, -127.0],
+      "right": [0.0, 0.0, 127.0]
+    },
+    "rotation_follow": 0.5
   },
   "debug": {
     "show_video": true,

@@ -8,15 +8,15 @@
 // This is the section where all of the settings we want are stored. A section name can be anything,
 // but if you want to store driver specific settings, it's best to namespace the section with the driver identifier
 // ie "<my_driver>_<section>" to avoid collisions
-static const char *my_controller_main_settings_section = "driver_simplecontroller";
+static const char *my_controller_main_settings_section = "driver_hand_camera_tracking";
 
 // Individual right/left hand settings sections
-static const char *my_controller_right_settings_section = "driver_simplecontroller_left_controller";
-static const char *my_controller_left_settings_section = "driver_simplecontroller_right_controller";
+static const char *my_controller_left_settings_section = "driver_hand_camera_tracking_left_hand";
+static const char *my_controller_right_settings_section = "driver_hand_camera_tracking_right_hand";
 
 // These are the keys we want to retrieve the values for in the settings
-static const char *my_controller_settings_key_model_number = "mycontroller_model_number";
-static const char *my_controller_settings_key_serial_number = "mycontroller_serial_number";
+static const char *my_controller_settings_key_model_number = "model_number";
+static const char *my_controller_settings_key_serial_number = "serial_number";
 
 
 MyControllerDeviceDriver::MyControllerDeviceDriver( vr::ETrackedControllerRole role )
@@ -31,15 +31,24 @@ MyControllerDeviceDriver::MyControllerDeviceDriver( vr::ETrackedControllerRole r
 	// We have our model number and serial number stored in SteamVR settings. We need to get them and do so here.
 	// Other IVRSettings methods (to get int32, floats, bools) return the data, instead of modifying, but strings are
 	// different.
-	char model_number[ 1024 ];
+	char model_number[ 1024 ] = { 0 };
 	vr::VRSettings()->GetString( my_controller_main_settings_section, my_controller_settings_key_model_number, model_number, sizeof( model_number ) );
-	my_controller_model_number_ = model_number;
+	my_controller_model_number_ = model_number[ 0 ] ? model_number : "WebcamHandTrackingModel 1";
 
 	// Get our serial number depending on our "handedness"
-	char serial_number[ 1024 ];
-	vr::VRSettings()->GetString( my_controller_role_ == vr::TrackedControllerRole_LeftHand ? my_controller_left_settings_section : my_controller_right_settings_section,
-		my_controller_settings_key_serial_number, serial_number, sizeof( serial_number ) );
-	my_controller_serial_number_ = serial_number;
+	// SteamVR rejects devices that register with an empty serial, so fall back to a
+	// synthetic unique value rather than letting TrackedDeviceAdded fail.
+	const char *serial_section = my_controller_role_ == vr::TrackedControllerRole_LeftHand ? my_controller_left_settings_section : my_controller_right_settings_section;
+	char serial_number[ 1024 ] = { 0 };
+	vr::VRSettings()->GetString( serial_section, my_controller_settings_key_serial_number, serial_number, sizeof( serial_number ) );
+	if ( serial_number[ 0 ] )
+	{
+		my_controller_serial_number_ = serial_number;
+	}
+	else
+	{
+		my_controller_serial_number_ = my_controller_role_ == vr::TrackedControllerRole_LeftHand ? "WebcamLeftHandABC123" : "WebcamRightHandXYZ789";
+	}
 
 	// Initialize hand tracking data with neutral values
 	hand_position_x_ = 0.0f;
@@ -91,7 +100,7 @@ vr::EVRInitError MyControllerDeviceDriver::Activate( uint32_t unObjectId )
 	// As well as what default bindings should be for legacy apps.
 	// Note, we can use the wildcard {<driver_name>} to match the root folder location
 	// of our driver.
-	vr::VRProperties()->SetStringProperty( container, vr::Prop_InputProfilePath_String, "{simplecontroller}/input/mycontroller_profile.json" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_InputProfilePath_String, "{HandTrackCamVR}/input/mycontroller_profile.json" );
 
 	// Let's set up handles for all of our components.
 	// Even though these are also defined in our input profile,
@@ -263,6 +272,13 @@ void MyControllerDeviceDriver::Deactivate()
 //-----------------------------------------------------------------------------
 void MyControllerDeviceDriver::MyRunFrame()
 {
+	// RunFrame can be called before Activate has populated the input handles, in which case
+	// every handle is still 0 and SteamVR logs "Invalid handle" for each call.
+	if ( !is_active_.load() || input_handles_[ MyComponent_trigger_value ] == vr::k_ulInvalidInputComponentHandle )
+	{
+		return;
+	}
+
 	// Update our inputs here with data from hand tracking
 	float trigger_val = trigger_value_.load();
 	float grip_val = grip_value_.load();
@@ -328,6 +344,19 @@ const std::string &MyControllerDeviceDriver::MyGetSerialNumber()
 //-----------------------------------------------------------------------------
 void MyControllerDeviceDriver::UpdateHandPosition( float x, float y, float z )
 {
+	// Throttled diagnostic so incoming tracking values can be verified from vrserver.txt.
+	// Roughly one line per second, per hand.
+	static std::atomic<int> log_counter{ 0 };
+	if ( ( ++log_counter % 90 ) == 1 )
+	{
+		const bool is_left = my_controller_role_ == vr::TrackedControllerRole_LeftHand;
+		DriverLog( "HandTracking %s pos: x=%.3f y=%.3f z=%.3f trigger=%.2f grip=%.2f active=%d",
+			is_left ? "LEFT" : "RIGHT",
+			x, y, z,
+			trigger_value_.load(), grip_value_.load(),
+			is_active_.load() ? 1 : 0 );
+	}
+
 	hand_position_x_.store( x );
 	hand_position_y_.store( y );
 	hand_position_z_.store( z );

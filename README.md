@@ -84,8 +84,15 @@ All dependencies are listed in `requirements.txt`:
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/xxDMONxx/HandCameraDriverbyDmonOw.git
+git clone --recursive https://github.com/xxDMONxx/HandCameraDriverbyDmonOw.git
 cd HandCameraDriverbyDmonOw
+```
+
+The OpenVR SDK is vendored as a git submodule pinned to tag `v2.15.6`, so `--recursive`
+is what makes the C++ driver buildable. If you already cloned without it:
+
+```bash
+git submodule update --init --recursive
 ```
 
 ### Step 2: Install Python Dependencies
@@ -113,16 +120,23 @@ pip install opencv-python mediapipe numpy
 ls /dev/video*
 ```
 
-### Step 4: Build and Install SteamVR Driver
+### Step 4: Build the SteamVR Driver
+
+SteamVR itself must be installed first (via the Steam client) — the driver is a plugin
+loaded by SteamVR's `vrserver.exe` and has no standalone mode.
 
 **Windows:**
 ```bash
 cd "SteamVR Driver\src"
 mkdir build
 cd build
-cmake ..
+cmake -A x64 ..
+cmake --build . --config Release
 ```
-Open the generated `.sln` file in Visual Studio and build the project (Release mode recommended).
+
+The DLL is written to `SteamVR Driver\bin\win64\driver_HandTrackCamVR.dll`, which is
+where SteamVR looks for it. You can also open the generated `.sln` in Visual Studio and
+build in Release mode.
 
 **Linux:**
 ```bash
@@ -135,9 +149,11 @@ make
 
 ### Step 5: Install Driver to SteamVR
 
+Copy the whole `SteamVR Driver` folder into the `drivers` directory of your SteamVR
+install (SteamVR → Settings → Developer Settings shows the install path).
+
 **Windows:**
 ```bash
-# Copy the driver folder to SteamVR drivers directory
 xcopy /E /I "SteamVR Driver" "%ProgramFiles(x86)%\Steam\steamapps\common\SteamVR\drivers\handcameradriver"
 ```
 

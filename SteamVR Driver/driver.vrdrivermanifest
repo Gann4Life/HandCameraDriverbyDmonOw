@@ -1,8 +1,0 @@
-{
-	"alwaysActivate": true,
-	"name" : "HandCameraDriver",
-	"directory" : "",
-	"resourceOnly" : false,
-
-	"hmd_presence" : []
-}

@@ -7,6 +7,85 @@ from typing import List, Tuple, Optional
 import numpy as np
 
 
+Quaternion = Tuple[float, float, float, float]  # (qw, qx, qy, qz)
+
+
+def quat_from_matrix(m: np.ndarray) -> Quaternion:
+    """
+    Convert a 3x3 rotation matrix (basis vectors as columns) to a quaternion.
+
+    Args:
+        m: Proper rotation matrix
+
+    Returns:
+        Unit quaternion (qw, qx, qy, qz)
+    """
+    trace = m[0, 0] + m[1, 1] + m[2, 2]
+    if trace > 0:
+        s = 2.0 * math.sqrt(trace + 1.0)
+        q = (0.25 * s, (m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s)
+    elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2])
+        q = ((m[2, 1] - m[1, 2]) / s, 0.25 * s, (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s)
+    elif m[1, 1] > m[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2])
+        q = ((m[0, 2] - m[2, 0]) / s, (m[0, 1] + m[1, 0]) / s, 0.25 * s, (m[1, 2] + m[2, 1]) / s)
+    else:
+        s = 2.0 * math.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1])
+        q = ((m[1, 0] - m[0, 1]) / s, (m[0, 2] + m[2, 0]) / s, (m[1, 2] + m[2, 1]) / s, 0.25 * s)
+    n = math.sqrt(sum(c * c for c in q))
+    return tuple(c / n for c in q)
+
+
+def quat_multiply(a: Quaternion, b: Quaternion) -> Quaternion:
+    """Hamilton product a * b (apply b, then a)."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return (
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    )
+
+
+def quat_from_euler_deg(pitch: float, yaw: float, roll: float) -> Quaternion:
+    """
+    Build a quaternion from degrees about X (pitch), Y (yaw) and Z (roll),
+    applied as yaw, then pitch, then roll.
+    """
+    def axis(angle_deg, ix):
+        half = math.radians(angle_deg) / 2.0
+        q = [math.cos(half), 0.0, 0.0, 0.0]
+        q[ix] = math.sin(half)
+        return tuple(q)
+    return quat_multiply(quat_multiply(axis(yaw, 2), axis(pitch, 1)), axis(roll, 3))
+
+
+def quat_rotate(q: Quaternion, v: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    """Rotate vector v by unit quaternion q."""
+    w, x, y, z = q
+    r = quat_multiply(quat_multiply(q, (0.0, *v)), (w, -x, -y, -z))
+    return (r[1], r[2], r[3])
+
+
+def quat_slerp(a: Quaternion, b: Quaternion, t: float) -> Quaternion:
+    """Spherical interpolation from a (t=0) to b (t=1), along the short arc."""
+    dot = sum(x * y for x, y in zip(a, b))
+    if dot < 0.0:
+        b = tuple(-c for c in b)
+        dot = -dot
+    if dot > 0.9995:
+        q = tuple(x + t * (y - x) for x, y in zip(a, b))
+    else:
+        theta = math.acos(dot)
+        sa = math.sin((1.0 - t) * theta) / math.sin(theta)
+        sb = math.sin(t * theta) / math.sin(theta)
+        q = tuple(sa * x + sb * y for x, y in zip(a, b))
+    n = math.sqrt(sum(c * c for c in q))
+    return tuple(c / n for c in q)
+
+
 class GestureDetector:
     """Detects hand gestures from MediaPipe landmarks."""
     
@@ -43,6 +122,7 @@ class GestureDetector:
         """
         self.pinch_threshold = pinch_threshold
         self.finger_extended_threshold = finger_extended_threshold
+        self._last_dorsal = {}  # is_left -> back-of-hand normal from the previous frame
     
     @staticmethod
     def calculate_distance(point1: Tuple[float, float, float], 
@@ -175,85 +255,115 @@ class GestureDetector:
         
         return 'UNKNOWN'
     
-    def calculate_hand_orientation(self, landmarks: List[Tuple[float, float, float]]) -> Tuple[float, float, float, float]:
+    # In "away" mode the back of the hand is taken to face the camera. When the
+    # hand is closer to edge-on than this (|cos| of the back-of-hand normal
+    # against the camera axis), the previous frame's side is kept instead,
+    # so the palm does not flicker between sides.
+    PALM_EDGE_ON_THRESHOLD = 0.25
+
+    def infer_is_left_palm_away(self, world_landmarks: List[Tuple[float, float, float]],
+                                mirror_x: bool = False) -> Optional[bool]:
         """
-        Calculate hand orientation as a quaternion.
-        
+        Tell left from right by hand geometry, given the back of the hand faces
+        the camera. MediaPipe's own label assumes a palm-side selfie view and is
+        unreliable when it sees the back of the hand.
+
         Args:
-            landmarks: List of 21 hand landmarks
-        
+            world_landmarks: 21 MediaPipe world landmarks
+            mirror_x: Same reflection as used for orientation
+
+        Returns:
+            True for left, False for right, None when the hand is too close to
+            edge-on for the geometry to decide
+        """
+        if len(world_landmarks) < 21:
+            return None
+        pts = np.array(world_landmarks, dtype=float) * np.array([1.0, -1.0, -1.0])
+        if mirror_x:
+            pts[:, 0] = -pts[:, 0]
+        forward = (pts[self.INDEX_FINGER_MCP] + pts[self.MIDDLE_FINGER_MCP] +
+                   pts[self.RING_FINGER_MCP] + pts[self.PINKY_MCP]) / 4.0 - pts[self.WRIST]
+        across = pts[self.INDEX_FINGER_MCP] - pts[self.PINKY_MCP]
+        # Back-of-hand normal if this were a right hand
+        dorsal_if_right = np.cross(forward, across)
+        norm = np.linalg.norm(dorsal_if_right)
+        if norm < 1e-9:
+            return None
+        facing = dorsal_if_right[2] / norm  # +Z is toward the camera
+        if abs(facing) < self.PALM_EDGE_ON_THRESHOLD:
+            return None
+        return facing < 0
+
+    def calculate_hand_orientation(self, world_landmarks: List[Tuple[float, float, float]],
+                                   is_left: bool, mirror_x: bool = False,
+                                   palm_away: bool = False) -> Tuple[float, float, float, float]:
+        """
+        Calculate hand orientation as a quaternion in OpenVR camera space.
+
+        The resulting frame follows the OpenVR controller convention: -Z points
+        along the fingers (wrist to middle knuckle), +Y out of the back of the
+        hand, +X completes a right-handed frame. A flat hand, palm down, fingers
+        pointing away from the camera, is the identity rotation.
+
+        Args:
+            world_landmarks: 21 MediaPipe world landmarks (metres; x right,
+                y down, z away from the camera)
+            is_left: Whether this is the user's left hand
+            mirror_x: Reflect the X axis to match a mirrored position mapping
+            palm_away: Decide the palm side from the camera (back of the hand
+                toward it, as in a first-person view) instead of from is_left
+
         Returns:
             Quaternion (qw, qx, qy, qz) representing hand orientation
         """
-        if len(landmarks) < 21:
+        if len(world_landmarks) < 21:
             return (1.0, 0.0, 0.0, 0.0)  # Identity quaternion
-        
-        # Get key points for orientation calculation
-        wrist = np.array(landmarks[self.WRIST])
-        middle_mcp = np.array(landmarks[self.MIDDLE_FINGER_MCP])
-        index_mcp = np.array(landmarks[self.INDEX_FINGER_MCP])
-        
-        # Calculate forward vector (from wrist to middle finger base)
-        forward = middle_mcp - wrist
-        forward_norm = np.linalg.norm(forward)
-        if forward_norm > 0:
-            forward = forward / forward_norm
-        else:
+
+        # MediaPipe camera axes -> OpenVR axes (y up, z toward the viewer).
+        # Reflecting the points before building the frame keeps it a proper
+        # rotation, which reflecting the finished quaternion would not.
+        pts = np.array(world_landmarks, dtype=float) * np.array([1.0, -1.0, -1.0])
+        if mirror_x:
+            pts[:, 0] = -pts[:, 0]
+
+        wrist = pts[self.WRIST]
+        knuckles = (pts[self.INDEX_FINGER_MCP] + pts[self.MIDDLE_FINGER_MCP] +
+                    pts[self.RING_FINGER_MCP] + pts[self.PINKY_MCP]) / 4.0
+        forward = knuckles - wrist
+        # Across the palm, pinky side to thumb side
+        across = pts[self.INDEX_FINGER_MCP] - pts[self.PINKY_MCP]
+
+        # Back-of-hand normal. The thumb is on opposite sides for each hand,
+        # so the cross product has to be taken in opposite orders.
+        dorsal = np.cross(across, forward) if is_left else np.cross(forward, across)
+
+        if palm_away:
+            # The camera looks down -Z, so "toward the camera" is +Z
+            norm = np.linalg.norm(dorsal)
+            facing = dorsal[2] / norm if norm > 1e-9 else 0.0
+            previous = self._last_dorsal.get(is_left)
+            if abs(facing) >= self.PALM_EDGE_ON_THRESHOLD:
+                if facing < 0:
+                    dorsal = -dorsal
+            elif previous is not None and np.dot(dorsal, previous) < 0:
+                dorsal = -dorsal
+            self._last_dorsal[is_left] = dorsal
+
+        z_axis = -forward
+        z_norm = np.linalg.norm(z_axis)
+        if z_norm < 1e-6:
             return (1.0, 0.0, 0.0, 0.0)
-        
-        # Calculate right vector (from index to middle MCP)
-        right = middle_mcp - index_mcp
-        right_norm = np.linalg.norm(right)
-        if right_norm > 0:
-            right = right / right_norm
-        else:
-            right = np.array([1.0, 0.0, 0.0])
-        
-        # Calculate up vector (cross product)
-        up = np.cross(forward, right)
-        up_norm = np.linalg.norm(up)
-        if up_norm > 0:
-            up = up / up_norm
-        else:
-            up = np.array([0.0, 1.0, 0.0])
-        
-        # Recalculate right to ensure orthogonality
-        right = np.cross(up, forward)
-        
-        # Convert rotation matrix to quaternion
-        # Using the rotation matrix [right, up, forward] as columns
-        m00, m01, m02 = right
-        m10, m11, m12 = up
-        m20, m21, m22 = forward
-        
-        trace = m00 + m11 + m22
-        
-        if trace > 0:
-            s = 0.5 / math.sqrt(trace + 1.0)
-            qw = 0.25 / s
-            qx = (m21 - m12) * s
-            qy = (m02 - m20) * s
-            qz = (m10 - m01) * s
-        elif m00 > m11 and m00 > m22:
-            s = 2.0 * math.sqrt(1.0 + m00 - m11 - m22)
-            qw = (m21 - m12) / s
-            qx = 0.25 * s
-            qy = (m01 + m10) / s
-            qz = (m02 + m20) / s
-        elif m11 > m22:
-            s = 2.0 * math.sqrt(1.0 + m11 - m00 - m22)
-            qw = (m02 - m20) / s
-            qx = (m01 + m10) / s
-            qy = 0.25 * s
-            qz = (m12 + m21) / s
-        else:
-            s = 2.0 * math.sqrt(1.0 + m22 - m00 - m11)
-            qw = (m10 - m01) / s
-            qx = (m02 + m20) / s
-            qy = (m12 + m21) / s
-            qz = 0.25 * s
-        
-        return (qw, qx, qy, qz)
+        z_axis /= z_norm
+
+        y_axis = dorsal - np.dot(dorsal, z_axis) * z_axis
+        y_norm = np.linalg.norm(y_axis)
+        if y_norm < 1e-6:
+            return (1.0, 0.0, 0.0, 0.0)
+        y_axis /= y_norm
+
+        x_axis = np.cross(y_axis, z_axis)
+
+        return quat_from_matrix(np.column_stack((x_axis, y_axis, z_axis)))
     
     def get_trigger_value(self, gesture: str) -> float:
         """
