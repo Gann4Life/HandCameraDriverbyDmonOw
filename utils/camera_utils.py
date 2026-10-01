@@ -2,6 +2,7 @@
 Camera utility functions for video capture and processing.
 """
 import cv2
+import threading
 import time
 from typing import List, Optional, Tuple
 
@@ -51,6 +52,14 @@ class CameraCapture:
         self.consecutive_read_failures = 0
         self.last_frame_time = time.time()
         self.active_backend: Optional[str] = None
+        # Background reader state, guarded by _frame_ready
+        self._frame_ready = threading.Condition()
+        self._reader: Optional[threading.Thread] = None
+        self._reader_running = False
+        self._latest_frame = None
+        self._frame_seq = 0
+        self._consumed_seq = 0
+        self.capture_fps = 0.0  # frames/s the device delivers (vs current_fps, frames/s tracked)
 
     def backend_candidates(self) -> List[Tuple[str, int]]:
         """
@@ -71,6 +80,8 @@ class CameraCapture:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         if self.fps > 0:
             cap.set(cv2.CAP_PROP_FPS, self.fps)
+        # Ask the driver not to queue frames; the reader thread only wants the newest
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     def _read_first_frame(self, cap: cv2.VideoCapture,
                           timeout: Optional[float] = None) -> Optional[cv2.Mat]:
@@ -170,6 +181,7 @@ class CameraCapture:
                           f"{self.width}x{self.height}")
 
                 self._report_frame_content(frame)
+                self._start_reader()
 
                 return True
 
@@ -182,28 +194,74 @@ class CameraCapture:
             print(f"Error starting camera: {e}")
             return False
     
-    def read_frame(self) -> Tuple[bool, Optional[cv2.Mat]]:
+    def _reader_loop(self, cap: cv2.VideoCapture):
         """
-        Read a frame from the camera.
+        Pull frames off the device as fast as it delivers them, keeping only
+        the newest. Runs on its own thread so the blocking read overlaps with
+        tracking instead of adding to it, and so tracking always works on the
+        most recent image rather than a queued, stale one.
+        """
+        window_start, window_frames = time.time(), 0
+        while self._reader_running:
+            ret, frame = cap.read()
+            with self._frame_ready:
+                if not ret or frame is None:
+                    self.consecutive_read_failures += 1
+                else:
+                    self.consecutive_read_failures = 0
+                    self.last_frame_time = time.time()
+                    self._latest_frame = frame
+                    self._frame_seq += 1
+                    self._frame_ready.notify_all()
+                    window_frames += 1
+                    elapsed = self.last_frame_time - window_start
+                    if elapsed > 1.0:
+                        self.capture_fps = window_frames / elapsed
+                        window_start, window_frames = self.last_frame_time, 0
+            if not ret:
+                # A dead MSMF stream fails instantly; don't spin a core on it
+                time.sleep(0.005)
+
+    def _start_reader(self):
+        """Start the background reader for the current device."""
+        self._latest_frame = None
+        self._frame_seq = 0
+        self._consumed_seq = 0
+        self._reader_running = True
+        self._reader = threading.Thread(target=self._reader_loop, args=(self.cap,), daemon=True)
+        self._reader.start()
+
+    def _stop_reader(self):
+        """Stop the background reader, if one is running."""
+        self._reader_running = False
+        if self._reader is not None:
+            self._reader.join(timeout=2.0)
+            self._reader = None
+
+    def read_frame(self, timeout: float = 0.1) -> Tuple[bool, Optional[cv2.Mat]]:
+        """
+        Return the newest frame not yet returned, waiting briefly for one.
 
         A failed read is reported as False, but transient dropouts are counted
         rather than treated as fatal so a virtual camera restarting its stream
         does not end the session.
 
+        Args:
+            timeout: Seconds to wait for a new frame
+
         Returns:
             Tuple of (success, frame)
         """
-        if self.cap is None or not self.cap.isOpened():
+        if self.cap is None or self._reader is None:
             return False, None
 
-        ret, frame = self.cap.read()
-
-        if not ret or frame is None:
-            self.consecutive_read_failures += 1
-            return False, None
-
-        self.consecutive_read_failures = 0
-        self.last_frame_time = time.time()
+        with self._frame_ready:
+            if self._frame_seq == self._consumed_seq:
+                self._frame_ready.wait(timeout)
+            if self._frame_seq == self._consumed_seq:
+                return False, None
+            frame = self._latest_frame
+            self._consumed_seq = self._frame_seq
 
         # Undo an upside-down mount before any mirroring
         if self.rotate_180:
@@ -237,7 +295,7 @@ class CameraCapture:
         Returns:
             True if the camera should be considered dead
         """
-        return self.consecutive_read_failures > 0 and time.time() - self.last_frame_time > timeout
+        return time.time() - self.last_frame_time > timeout
 
     def reopen(self) -> bool:
         """
@@ -250,6 +308,7 @@ class CameraCapture:
         Returns:
             True if the camera is delivering frames again
         """
+        self._stop_reader()
         if self.cap is not None:
             self.cap.release()
             self.cap = None
@@ -261,6 +320,7 @@ class CameraCapture:
 
     def release(self):
         """Release camera resources."""
+        self._stop_reader()
         if self.cap is not None:
             self.cap.release()
             self.cap = None

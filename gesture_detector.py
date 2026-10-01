@@ -261,8 +261,38 @@ class GestureDetector:
     # so the palm does not flicker between sides.
     PALM_EDGE_ON_THRESHOLD = 0.25
 
+    @staticmethod
+    def _user_frame_points(world_landmarks: List[Tuple[float, float, float]],
+                           mirror_x: bool, flip_z: bool) -> Tuple[np.ndarray, float]:
+        """
+        Convert MediaPipe world landmarks into the user's OpenVR frame.
+
+        Reflections are applied to the points before any frame is built from
+        them, which keeps the result a proper rotation; reflecting a finished
+        quaternion would not.
+
+        Args:
+            world_landmarks: 21 MediaPipe world landmarks (x right, y down,
+                z away from the camera)
+            mirror_x: Reflect X (image mirroring and/or a camera facing the user)
+            flip_z: Reflect Z (camera facing the user, looking back toward them)
+
+        Returns:
+            (points, toward_camera_z): the converted points, and the sign of Z
+            that points from the hands toward the camera in that frame
+        """
+        # MediaPipe camera axes -> OpenVR axes (y up, z toward the viewer)
+        pts = np.array(world_landmarks, dtype=float) * np.array([1.0, -1.0, -1.0])
+        if mirror_x:
+            pts[:, 0] = -pts[:, 0]
+        if flip_z:
+            pts[:, 2] = -pts[:, 2]
+        # A head-mounted camera sits behind the hands (+Z); one facing the
+        # user sits in front of them (-Z)
+        return pts, (-1.0 if flip_z else 1.0)
+
     def infer_is_left_palm_away(self, world_landmarks: List[Tuple[float, float, float]],
-                                mirror_x: bool = False) -> Optional[bool]:
+                                mirror_x: bool = False, flip_z: bool = False) -> Optional[bool]:
         """
         Tell left from right by hand geometry, given the back of the hand faces
         the camera. MediaPipe's own label assumes a palm-side selfie view and is
@@ -271,6 +301,7 @@ class GestureDetector:
         Args:
             world_landmarks: 21 MediaPipe world landmarks
             mirror_x: Same reflection as used for orientation
+            flip_z: Same reflection as used for orientation
 
         Returns:
             True for left, False for right, None when the hand is too close to
@@ -278,9 +309,7 @@ class GestureDetector:
         """
         if len(world_landmarks) < 21:
             return None
-        pts = np.array(world_landmarks, dtype=float) * np.array([1.0, -1.0, -1.0])
-        if mirror_x:
-            pts[:, 0] = -pts[:, 0]
+        pts, toward_camera_z = self._user_frame_points(world_landmarks, mirror_x, flip_z)
         forward = (pts[self.INDEX_FINGER_MCP] + pts[self.MIDDLE_FINGER_MCP] +
                    pts[self.RING_FINGER_MCP] + pts[self.PINKY_MCP]) / 4.0 - pts[self.WRIST]
         across = pts[self.INDEX_FINGER_MCP] - pts[self.PINKY_MCP]
@@ -289,14 +318,15 @@ class GestureDetector:
         norm = np.linalg.norm(dorsal_if_right)
         if norm < 1e-9:
             return None
-        facing = dorsal_if_right[2] / norm  # +Z is toward the camera
+        facing = toward_camera_z * dorsal_if_right[2] / norm
         if abs(facing) < self.PALM_EDGE_ON_THRESHOLD:
             return None
         return facing < 0
 
     def calculate_hand_orientation(self, world_landmarks: List[Tuple[float, float, float]],
                                    is_left: bool, mirror_x: bool = False,
-                                   palm_away: bool = False) -> Tuple[float, float, float, float]:
+                                   palm_away: bool = False,
+                                   flip_z: bool = False) -> Tuple[float, float, float, float]:
         """
         Calculate hand orientation as a quaternion in OpenVR camera space.
 
@@ -312,6 +342,7 @@ class GestureDetector:
             mirror_x: Reflect the X axis to match a mirrored position mapping
             palm_away: Decide the palm side from the camera (back of the hand
                 toward it, as in a first-person view) instead of from is_left
+            flip_z: Reflect Z, for a camera facing the user
 
         Returns:
             Quaternion (qw, qx, qy, qz) representing hand orientation
@@ -319,12 +350,7 @@ class GestureDetector:
         if len(world_landmarks) < 21:
             return (1.0, 0.0, 0.0, 0.0)  # Identity quaternion
 
-        # MediaPipe camera axes -> OpenVR axes (y up, z toward the viewer).
-        # Reflecting the points before building the frame keeps it a proper
-        # rotation, which reflecting the finished quaternion would not.
-        pts = np.array(world_landmarks, dtype=float) * np.array([1.0, -1.0, -1.0])
-        if mirror_x:
-            pts[:, 0] = -pts[:, 0]
+        pts, toward_camera_z = self._user_frame_points(world_landmarks, mirror_x, flip_z)
 
         wrist = pts[self.WRIST]
         knuckles = (pts[self.INDEX_FINGER_MCP] + pts[self.MIDDLE_FINGER_MCP] +
@@ -338,9 +364,8 @@ class GestureDetector:
         dorsal = np.cross(across, forward) if is_left else np.cross(forward, across)
 
         if palm_away:
-            # The camera looks down -Z, so "toward the camera" is +Z
             norm = np.linalg.norm(dorsal)
-            facing = dorsal[2] / norm if norm > 1e-9 else 0.0
+            facing = toward_camera_z * dorsal[2] / norm if norm > 1e-9 else 0.0
             previous = self._last_dorsal.get(is_left)
             if abs(facing) >= self.PALM_EDGE_ON_THRESHOLD:
                 if facing < 0:

@@ -7,6 +7,7 @@ import mediapipe as mp
 import argparse
 import json
 import math
+import sys
 import time
 import numpy as np
 from typing import List, Tuple, Optional
@@ -62,8 +63,16 @@ class HandTracker:
         self.mirror_x = (mode == "facing") != mirrored
         # Which way the palms face: "away" from the camera (back of the hand
         # visible, the POV default) or "auto" from MediaPipe's handedness.
-        palm_facing = str(tracking_config.get('palm_facing', 'away' if mode == 'pov' else 'auto')).lower()
+        palm_facing = str(tracking_config.get('palm_facing', 'mode')).lower()
+        if palm_facing not in ('away', 'auto'):
+            # "mode": hands seen from behind in POV, palms free to face a camera in front
+            palm_facing = 'away' if mode == 'pov' else 'auto'
         self.palm_away = palm_facing == 'away'
+        # A camera facing the user looks back toward them, so its depth axis
+        # runs opposite to the headset's: Z is reflected, and the hands are
+        # placed relative to the camera's distance in front of the user.
+        self.flip_z = mode == 'facing'
+        self.facing_distance = float(cam_config.get('facing_distance', 0.8))
 
         # Initialize MediaPipe Hands
         self.mp_hands = mp.solutions.hands
@@ -109,10 +118,12 @@ class HandTracker:
         self.debug = self.config['debug']
         
         # Calibration
-        self.calibration = self.config.get('calibration', {
-            'position_offset': [0.0, 0.0, 0.0],
-            'scale': 1.0
-        })
+        # Shared values at the top level; the active mode's section (e.g.
+        # calibration.pov) overrides them, so each mode keeps its own offsets
+        base_calibration = {'position_offset': [0.0, 0.0, 0.0], 'scale': 1.0}
+        base_calibration.update(self.config.get('calibration', {}))
+        self.calibration = {k: v for k, v in base_calibration.items() if k not in VIEW_MODES}
+        self.calibration.update(base_calibration.get(self.view_mode, {}))
         # Camera mounting relative to the HMD, as [pitch, yaw, roll] degrees
         # (e.g. a head-mounted camera tilted down toward the hands: negative pitch)
         self.camera_rotation = quat_from_euler_deg(*self.calibration.get('camera_rotation_deg', [0.0, 0.0, 0.0]))
@@ -301,7 +312,7 @@ class HandTracker:
             if self.palm_away:
                 # Seen from behind, the hand's own shape is a better handedness
                 # signal than MediaPipe's palm-view label
-                inferred = self.gesture_detector.infer_is_left_palm_away(world, self.mirror_x)
+                inferred = self.gesture_detector.infer_is_left_palm_away(world, self.mirror_x, self.flip_z)
                 if inferred is not None:
                     is_left = inferred
         hand_type = "left" if is_left else "right"
@@ -320,6 +331,10 @@ class HandTracker:
         scale = self.calibration['scale']
         offset = self.calibration['position_offset']
         x, y, z = camera_position
+        if self.flip_z:
+            # Distance from a camera in front of the user becomes distance
+            # forward of the user: a hand nearer the camera is further out
+            z = -z - self.facing_distance
         cx, cy, cz = quat_rotate(self.camera_rotation, (x * scale, y * scale, z * scale))
         position = (cx + offset[0], cy + offset[1], cz + offset[2])
 
@@ -327,7 +342,7 @@ class HandTracker:
         # normalised ones have a squashed, image-relative Z and unequal X/Y scales.
         if world is not None:
             rotation = self.gesture_detector.calculate_hand_orientation(world, is_left, self.mirror_x,
-                                                                        self.palm_away)
+                                                                        self.palm_away, self.flip_z)
             rotation = quat_multiply(self.camera_rotation, rotation)
             rotation = quat_multiply(rotation, self.rotation_offsets[hand_type])
             previous = self.last_rotation.get(hand_type)
@@ -406,7 +421,7 @@ class HandTracker:
         """
         # Draw FPS
         if self.debug['show_fps']:
-            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30),
+            cv2.putText(frame, f"FPS: {fps:.1f} (camera {self.camera.capture_fps:.0f})", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
         # Draw hand information
@@ -447,7 +462,7 @@ class HandTracker:
                             print(f"Camera did not come back within {self.reconnect_timeout:.0f}s. Exiting.")
                             break
                         continue
-                    time.sleep(0.01)
+                    # read_frame already waited for a frame; nothing more to wait for
                     continue
                 
                 # Convert to RGB for MediaPipe
@@ -540,10 +555,24 @@ def main():
                         help="Camera is mounted upside down")
     args = parser.parse_args()
 
-    # Create and run tracker
-    tracker = HandTracker(args.config, view_mode=args.mode,
-                          swap_hands=args.swap_hands, rotate_180=args.rotate_180)
-    tracker.run()
+    # Windows' default 15.6 ms timer tick puts a floor under every
+    # cv2.waitKey(1) and sleep; that alone costs ~15 ms per frame.
+    timer_raised = False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            timer_raised = ctypes.windll.winmm.timeBeginPeriod(1) == 0
+        except (OSError, AttributeError):
+            pass
+
+    try:
+        # Create and run tracker
+        tracker = HandTracker(args.config, view_mode=args.mode,
+                              swap_hands=args.swap_hands, rotate_180=args.rotate_180)
+        tracker.run()
+    finally:
+        if timer_raised:
+            ctypes.windll.winmm.timeEndPeriod(1)
 
 
 if __name__ == "__main__":

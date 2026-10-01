@@ -9,6 +9,7 @@
     "backend": "auto",
     "rotate_180": false,
     "hfov_deg": 70.0,
+    "facing_distance": 0.8,
     "stall_timeout": 2.0,
     "reconnect_timeout": 30.0
   },
@@ -18,7 +19,7 @@
     "tracking_confidence": 0.5,
     "model_complexity": 1,
     "view_mode": "pov",
-    "palm_facing": "away",
+    "palm_facing": "mode",
     "swap_hands": false
   },
   "network": {
@@ -30,17 +31,27 @@
     "finger_extended_threshold": 0.6
   },
   "calibration": {
-    "position_offset": [0.0, 0.0, 0.0],
     "scale": 1.0,
-    "camera_rotation_deg": [0.0, 0.0, 0.0],
-    "rotation_offset_deg": {
-      "left": [-45.0, 0.0, -127.0],
-      "right": [-45.0, 0.0, 127.0]
-    },
     "rotation_follow": 0.5,
     "hand_scale": 1.0,
     "position_follow": 0.7,
-    "depth_follow": 0.35
+    "depth_follow": 0.35,
+    "pov": {
+      "position_offset": [0.0, 0.0, 0.0],
+      "camera_rotation_deg": [0.0, 0.0, 0.0],
+      "rotation_offset_deg": {
+        "left": [-45.0, 0.0, -127.0],
+        "right": [-45.0, 0.0, 127.0]
+      }
+    },
+    "facing": {
+      "position_offset": [0.0, 0.0, 0.0],
+      "camera_rotation_deg": [0.0, 0.0, 0.0],
+      "rotation_offset_deg": {
+        "left": [0.0, 0.0, 0.0],
+        "right": [0.0, 0.0, 0.0]
+      }
+    }
   },
   "debug": {
     "show_video": true,
