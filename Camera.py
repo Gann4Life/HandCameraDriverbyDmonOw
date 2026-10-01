@@ -6,7 +6,9 @@ import cv2
 import mediapipe as mp
 import argparse
 import json
+import math
 import time
+import numpy as np
 from typing import List, Tuple, Optional
 from hand_data import HandData
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate, quat_slerp
@@ -123,6 +125,14 @@ class HandTracker:
         # Fraction of each new orientation sample to follow (1.0 = no smoothing)
         self.rotation_follow = min(1.0, max(0.05, float(self.calibration.get('rotation_follow', 0.5))))
         self.last_rotation = {}
+        # Metric position: horizontal field of view of the camera, and how the
+        # user's hand compares to MediaPipe's average-sized hand model
+        self.hfov_deg = float(cam_config.get('hfov_deg', 70.0))
+        self.hand_scale = float(self.calibration.get('hand_scale', 1.0))
+        # Fraction of each new position sample to follow (1.0 = no smoothing)
+        self.position_follow = min(1.0, max(0.05, float(self.calibration.get('position_follow', 0.7))))
+        self.depth_follow = min(1.0, max(0.05, float(self.calibration.get('depth_follow', 0.35))))
+        self.last_camera_position = {}
 
         print("HandTracker initialized")
         print(f"Camera: {cam_config['width']}x{cam_config['height']} @ {cam_config['fps']}fps")
@@ -131,6 +141,87 @@ class HandTracker:
               f"{', rotated 180' if self.camera.rotate_180 else ''}")
         print(f"Network: {net_config['host']}:{net_config['port']}")
     
+    def estimate_wrist_position(self, hand_landmarks, world: List[Tuple[float, float, float]],
+                                frame_width: int, frame_height: int) -> Optional[Tuple[float, float, float]]:
+        """
+        Locate the wrist in 3D by fitting MediaPipe's metric hand model to where
+        its landmarks appear in the image (perspective-n-point).
+
+        MediaPipe world landmarks use OpenCV camera axes (x right, y down,
+        z forward), so solvePnP's translation is directly the hand's offset
+        from the camera.
+
+        Args:
+            hand_landmarks: Normalised image landmarks
+            world: World landmarks in metres, centred on the hand
+            frame_width: Frame width in pixels
+            frame_height: Frame height in pixels
+
+        Returns:
+            Wrist (x, y, z) in OpenVR camera space (y up, -z forward), or None
+            if the fit failed
+        """
+        object_points = np.array(world, dtype=np.float64) * self.hand_scale
+        image_points = np.array([(lm.x * frame_width, lm.y * frame_height)
+                                 for lm in hand_landmarks.landmark], dtype=np.float64)
+        focal = (frame_width / 2.0) / math.tan(math.radians(self.hfov_deg) / 2.0)
+        camera_matrix = np.array([[focal, 0.0, frame_width / 2.0],
+                                  [0.0, focal, frame_height / 2.0],
+                                  [0.0, 0.0, 1.0]])
+        try:
+            ok, rvec, tvec = cv2.solvePnP(object_points, image_points, camera_matrix, None,
+                                          flags=cv2.SOLVEPNP_SQPNP)
+        except cv2.error:
+            return None
+        if not ok:
+            return None
+        rotation_matrix, _ = cv2.Rodrigues(rvec)
+        wrist = rotation_matrix @ object_points[0] + tvec.reshape(3)
+        # Behind the camera or implausibly far means the fit went wrong
+        if not 0.05 < wrist[2] < 3.0:
+            return None
+        x = -wrist[0] if self.mirror_x else wrist[0]
+        return (float(x), float(-wrist[1]), float(-wrist[2]))
+
+    def estimate_wrist_position_fallback(self, landmarks: List[Tuple[float, float, float]]) -> Tuple[float, float, float]:
+        """
+        Rough wrist position when no metric fit is available: image position
+        projected at a fixed arm's-length depth.
+
+        Args:
+            landmarks: Normalised image landmarks
+
+        Returns:
+            Wrist (x, y, z) in OpenVR camera space
+        """
+        depth = 0.45
+        half_width = depth * math.tan(math.radians(self.hfov_deg) / 2.0)
+        x = (landmarks[0][0] - 0.5) * 2.0 * half_width
+        y = -(landmarks[0][1] - 0.5) * 2.0 * half_width * (self.camera.height / self.camera.width)
+        return (-x if self.mirror_x else x, y, -depth)
+
+    def smooth_camera_position(self, hand_type: str,
+                               position: Tuple[float, float, float]) -> Tuple[float, float, float]:
+        """
+        Exponentially smooth a camera-space position. Depth is far noisier than
+        the image-plane axes, so it gets its own, usually heavier, filter.
+
+        Args:
+            hand_type: "left" or "right"
+            position: New camera-space sample
+
+        Returns:
+            Smoothed position (also stored for the next frame)
+        """
+        previous = self.last_camera_position.get(hand_type)
+        if previous is not None:
+            a, d = self.position_follow, self.depth_follow
+            position = (previous[0] + a * (position[0] - previous[0]),
+                        previous[1] + a * (position[1] - previous[1]),
+                        previous[2] + d * (position[2] - previous[2]))
+        self.last_camera_position[hand_type] = position
+        return position
+
     def reconnect_camera(self) -> bool:
         """
         Keep reopening the camera until it delivers frames or reconnect_timeout
@@ -215,23 +306,20 @@ class HandTracker:
                     is_left = inferred
         hand_type = "left" if is_left else "right"
 
-        # Calculate hand position (using wrist position)
-        wrist = landmarks[0]
-        
-        # Convert normalized coordinates to world coordinates
-        # Center the coordinates around 0 and scale appropriately
-        x = (wrist[0] - 0.5) * 2.0  # Range: -1.0 to 1.0
-        if self.mirror_x:
-            x = -x
-        y = -(wrist[1] - 0.5) * 2.0  # Range: -1.0 to 1.0, inverted
-        
-        # Estimate Z based on hand size (larger hand = closer to camera = more negative Z)
-        palm_size = self.calculate_palm_size(landmarks)
-        z = -0.5 - (palm_size * 2.0)  # Approximate depth
-        
+        # Wrist position in OpenVR camera space, in metres
+        camera_position = None
+        if world is not None:
+            camera_position = self.estimate_wrist_position(hand_landmarks, world, frame_width, frame_height)
+        if camera_position is None:
+            camera_position = self.last_camera_position.get(hand_type)
+        if camera_position is None:
+            camera_position = self.estimate_wrist_position_fallback(landmarks)
+        camera_position = self.smooth_camera_position(hand_type, camera_position)
+
         # Apply calibration: scale in camera space, tilt into HMD space, then offset
         scale = self.calibration['scale']
         offset = self.calibration['position_offset']
+        x, y, z = camera_position
         cx, cy, cz = quat_rotate(self.camera_rotation, (x * scale, y * scale, z * scale))
         position = (cx + offset[0], cy + offset[1], cz + offset[2])
 
@@ -325,7 +413,8 @@ class HandTracker:
         y_offset = 60
         for hand in hands_data:
             if hand.is_detected:
-                info_text = f"{hand.hand_type.upper()}: {hand.gesture}"
+                depth_cm = -self.last_camera_position.get(hand.hand_type, (0.0, 0.0, 0.0))[2] * 100.0
+                info_text = f"{hand.hand_type.upper()}: {hand.gesture}  {depth_cm:.0f} cm"
                 cv2.putText(frame, info_text, (10, y_offset),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
                 y_offset += 30

@@ -8,6 +8,7 @@
     "source_mirrored": false,
     "backend": "auto",
     "rotate_180": false,
+    "hfov_deg": 70.0,
     "stall_timeout": 2.0,
     "reconnect_timeout": 30.0
   },
@@ -33,10 +34,13 @@
     "scale": 1.0,
     "camera_rotation_deg": [0.0, 0.0, 0.0],
     "rotation_offset_deg": {
-      "left": [0.0, 0.0, -127.0],
-      "right": [0.0, 0.0, 127.0]
+      "left": [-45.0, 0.0, -127.0],
+      "right": [-45.0, 0.0, 127.0]
     },
-    "rotation_follow": 0.5
+    "rotation_follow": 0.5,
+    "hand_scale": 1.0,
+    "position_follow": 0.7,
+    "depth_follow": 0.35
   },
   "debug": {
     "show_video": true,
