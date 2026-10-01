@@ -28,12 +28,18 @@ MyControllerDeviceDriver::MyControllerDeviceDriver( vr::ETrackedControllerRole r
 	// Let's store it for later use. We'll need it.
 	my_controller_role_ = role;
 
+	// No handles exist until Activate creates them; MyRunFrame checks for this
+	input_handles_.fill( vr::k_ulInvalidInputComponentHandle );
+
 	// We have our model number and serial number stored in SteamVR settings. We need to get them and do so here.
 	// Other IVRSettings methods (to get int32, floats, bools) return the data, instead of modifying, but strings are
 	// different.
+	// Default to the model number a real Quest 2 controller reports, since some games pick
+	// per-controller hand offsets from it.
 	char model_number[ 1024 ] = { 0 };
 	vr::VRSettings()->GetString( my_controller_main_settings_section, my_controller_settings_key_model_number, model_number, sizeof( model_number ) );
-	my_controller_model_number_ = model_number[ 0 ] ? model_number : "WebcamHandTrackingModel 1";
+	my_controller_model_number_ = model_number[ 0 ] ? model_number
+		: ( my_controller_role_ == vr::TrackedControllerRole_LeftHand ? "Oculus Quest2 (Left Controller)" : "Oculus Quest2 (Right Controller)" );
 
 	// Get our serial number depending on our "handedness"
 	// SteamVR rejects devices that register with an empty serial, so fall back to a
@@ -96,32 +102,52 @@ vr::EVRInitError MyControllerDeviceDriver::Activate( uint32_t unObjectId )
 
 	// Now let's set up our inputs
 
-	// This tells the UI what to show the user for bindings for this controller,
-	// As well as what default bindings should be for legacy apps.
-	// Note, we can use the wildcard {<driver_name>} to match the root folder location
-	// of our driver.
-	vr::VRProperties()->SetStringProperty( container, vr::Prop_InputProfilePath_String, "{HandTrackCamVR}/input/mycontroller_profile.json" );
+	// Present as an Oculus Touch controller. Games ship bindings for Touch but
+	// have never heard of a custom controller type, and under SteamVR Input even
+	// the hand pose is an action that only reaches the game through a binding;
+	// without one the hands simply do not appear. The profile, render models and
+	// legacy bindings all come from SteamVR's own bundled oculus driver.
+	const bool is_left = my_controller_role_ == vr::TrackedControllerRole_LeftHand;
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_ControllerType_String, "oculus_touch" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_InputProfilePath_String, "{oculus}/input/touch_profile.json" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_RenderModelName_String, is_left ? "oculus_quest2_controller_left" : "oculus_quest2_controller_right" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_ManufacturerName_String, "Oculus" );
+
+	// Other drivers (e.g. a streaming headset's own controllers) may claim the
+	// same hand roles. Higher numbers win the hand assignment.
+	vr::VRProperties()->SetInt32Property( container, vr::Prop_ControllerHandSelectionPriority_Int32, 1000 );
 
 	// Let's set up handles for all of our components.
 	// Even though these are also defined in our input profile,
 	// We need to get handles to them to update the inputs.
+	// Ones hand tracking has no equivalent for are created anyway and held at
+	// rest, because bindings expect every Touch component to exist.
 
-	// Let's set up our "A" button. We've defined it to have a touch and a click component.
-	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/a/touch", &input_handles_[ MyComponent_a_touch ] );
-	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/a/click", &input_handles_[ MyComponent_a_click ] );
-
-	// Let's set up our trigger. We've defined it to have a value and click component.
+	// Face buttons: A/B on the right controller, X/Y on the left
+	const char *primary = is_left ? "/input/x" : "/input/a";
+	const char *secondary = is_left ? "/input/y" : "/input/b";
+	vr::VRDriverInput()->CreateBooleanComponent( container, ( std::string( primary ) + "/click" ).c_str(), &input_handles_[ MyComponent_primary_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, ( std::string( primary ) + "/touch" ).c_str(), &input_handles_[ MyComponent_primary_touch ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, ( std::string( secondary ) + "/click" ).c_str(), &input_handles_[ MyComponent_secondary_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, ( std::string( secondary ) + "/touch" ).c_str(), &input_handles_[ MyComponent_secondary_touch ] );
 
 	// CreateScalarComponent requires:
 	// EVRScalarType - whether the device can give an absolute position, or just one relative to where it was last. We
 	// can do it absolute.
 	// EVRScalarUnits - whether the devices has two "sides", like a joystick. This makes the range of valid inputs -1
-	// to 1. Otherwise, it's 0 to 1. We only have one "side", so ours is onesided.
+	// to 1. Otherwise, it's 0 to 1. Triggers are one-sided, the joystick two-sided.
 	vr::VRDriverInput()->CreateScalarComponent( container, "/input/trigger/value", &input_handles_[ MyComponent_trigger_value ], vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedOneSided );
-	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/trigger/click", &input_handles_[ MyComponent_trigger_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/trigger/touch", &input_handles_[ MyComponent_trigger_touch ] );
 
-	// Create grip value component for hand tracking
 	vr::VRDriverInput()->CreateScalarComponent( container, "/input/grip/value", &input_handles_[ MyComponent_grip_value ], vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedOneSided );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/grip/touch", &input_handles_[ MyComponent_grip_touch ] );
+
+	vr::VRDriverInput()->CreateScalarComponent( container, "/input/joystick/x", &input_handles_[ MyComponent_joystick_x ], vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedTwoSided );
+	vr::VRDriverInput()->CreateScalarComponent( container, "/input/joystick/y", &input_handles_[ MyComponent_joystick_y ], vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedTwoSided );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/joystick/click", &input_handles_[ MyComponent_joystick_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/joystick/touch", &input_handles_[ MyComponent_joystick_touch ] );
+
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/thumbrest/touch", &input_handles_[ MyComponent_thumbrest_touch ] );
 
 	// Let's create our haptic component.
 	// These are global across the device, and you can only have one per device.
@@ -283,16 +309,23 @@ void MyControllerDeviceDriver::MyRunFrame()
 	float trigger_val = trigger_value_.load();
 	float grip_val = grip_value_.load();
 
-	// Update trigger
+	// Touch has no trigger/grip click; games read the analog value (and a
+	// "touch" when the finger rests on it)
 	vr::VRDriverInput()->UpdateScalarComponent( input_handles_[ MyComponent_trigger_value ], trigger_val, 0 );
-	vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ MyComponent_trigger_click ], trigger_val > 0.5f, 0 );
+	vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ MyComponent_trigger_touch ], trigger_val > 0.1f, 0 );
 
-	// Update grip
 	vr::VRDriverInput()->UpdateScalarComponent( input_handles_[ MyComponent_grip_value ], grip_val, 0 );
+	vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ MyComponent_grip_touch ], grip_val > 0.1f, 0 );
 
-	// Update A button based on gesture (you could map specific gestures here)
-	vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ MyComponent_a_click ], false, 0 );
-	vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ MyComponent_a_touch ], false, 0 );
+	// No hand-tracking equivalent yet for face buttons, joystick or thumbrest:
+	// hold them at rest (gestures could be mapped here later)
+	for ( MyComponent button : { MyComponent_primary_click, MyComponent_primary_touch, MyComponent_secondary_click,
+			  MyComponent_secondary_touch, MyComponent_joystick_click, MyComponent_joystick_touch, MyComponent_thumbrest_touch } )
+	{
+		vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ button ], false, 0 );
+	}
+	vr::VRDriverInput()->UpdateScalarComponent( input_handles_[ MyComponent_joystick_x ], 0.f, 0 );
+	vr::VRDriverInput()->UpdateScalarComponent( input_handles_[ MyComponent_joystick_y ], 0.f, 0 );
 }
 
 

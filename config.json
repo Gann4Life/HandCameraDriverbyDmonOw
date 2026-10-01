@@ -20,7 +20,17 @@
     "model_complexity": 1,
     "view_mode": "pov",
     "palm_facing": "mode",
-    "swap_hands": false
+    "swap_hands": false,
+    "identity": {
+      "continuity_radius": 0.15,
+      "memory_seconds": 0.4,
+      "switch_frames": 6,
+      "duplicate_radius": 0.05
+    }
+  },
+  "process": {
+    "priority": "above_normal",
+    "disable_power_throttling": true
   },
   "network": {
     "host": "127.0.0.1",
@@ -32,10 +42,15 @@
   },
   "calibration": {
     "scale": 1.0,
-    "rotation_follow": 0.5,
     "hand_scale": 1.0,
-    "position_follow": 0.7,
-    "depth_follow": 0.35,
+    "filter": {
+      "mode": "one_euro",
+      "position": { "min_cutoff": 1.0, "beta": 1.5 },
+      "depth": { "min_cutoff": 0.3, "beta": 2.0 },
+      "rotation": { "min_cutoff": 1.0, "beta": 0.5 },
+      "d_cutoff": 1.0,
+      "ema": { "position": 0.7, "depth": 0.35, "rotation": 0.5 }
+    },
     "pov": {
       "position_offset": [0.0, 0.0, 0.0],
       "camera_rotation_deg": [0.0, 0.0, 0.0],

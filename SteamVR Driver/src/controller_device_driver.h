@@ -8,15 +8,29 @@
 #include <atomic>
 #include <thread>
 
+// Components of an Oculus Touch controller ({oculus}/input/touch_profile.json),
+// which this device presents itself as so that games use their existing
+// Touch bindings. The face buttons are A/B on the right hand and X/Y on the left;
+// "primary"/"secondary" stand for whichever pair this hand has.
 enum MyComponent
 {
-	MyComponent_a_touch,
-	MyComponent_a_click,
+	MyComponent_primary_click,
+	MyComponent_primary_touch,
+	MyComponent_secondary_click,
+	MyComponent_secondary_touch,
 
 	MyComponent_trigger_value,
-	MyComponent_trigger_click,
+	MyComponent_trigger_touch,
 
 	MyComponent_grip_value,
+	MyComponent_grip_touch,
+
+	MyComponent_joystick_x,
+	MyComponent_joystick_y,
+	MyComponent_joystick_click,
+	MyComponent_joystick_touch,
+
+	MyComponent_thumbrest_touch,
 
 	MyComponent_haptic,
 

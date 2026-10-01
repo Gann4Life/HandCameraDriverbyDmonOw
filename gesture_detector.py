@@ -123,6 +123,7 @@ class GestureDetector:
         self.pinch_threshold = pinch_threshold
         self.finger_extended_threshold = finger_extended_threshold
         self._last_dorsal = {}  # is_left -> back-of-hand normal from the previous frame
+        self._last_facing = 0.0  # |cos| of the last handedness check, its confidence
     
     @staticmethod
     def calculate_distance(point1: Tuple[float, float, float], 
@@ -291,6 +292,68 @@ class GestureDetector:
         # user sits in front of them (-Z)
         return pts, (-1.0 if flip_z else 1.0)
 
+    # Average finger bend (fraction of finger length off the palm plane) that
+    # counts as a fully confident curl vote
+    CURL_FULL_CONFIDENCE = 0.25
+
+    def handedness_evidence_curl(self, world_landmarks: List[Tuple[float, float, float]]) -> float:
+        """
+        Signed handedness vote from which way the fingers bend. Fingers only
+        flex toward the palm, so the side they bend to gives the palm side, and
+        with it the chirality, without assuming anything about which side faces
+        the camera. Weak for a flat, fully open hand.
+
+        Args:
+            world_landmarks: 21 MediaPipe world landmarks
+
+        Returns:
+            Value in [-1, 1]: positive for left, negative for right
+        """
+        if len(world_landmarks) < 21:
+            return 0.0
+        # Chirality survives any rotation, so plain MediaPipe axes will do;
+        # only a reflection would change the answer
+        pts = np.array(world_landmarks, dtype=float)
+        forward = (pts[self.INDEX_FINGER_MCP] + pts[self.MIDDLE_FINGER_MCP] +
+                   pts[self.RING_FINGER_MCP] + pts[self.PINKY_MCP]) / 4.0 - pts[self.WRIST]
+        across = pts[self.INDEX_FINGER_MCP] - pts[self.PINKY_MCP]
+        # MediaPipe's axes (x right, y down, z away) are left-handed, so this
+        # order gives the back-of-hand normal of a right hand
+        dorsal_if_right = np.cross(across, forward)
+        norm = np.linalg.norm(dorsal_if_right)
+        if norm < 1e-9:
+            return 0.0
+        dorsal_if_right /= norm
+
+        bends = []
+        for mcp, tip in ((self.INDEX_FINGER_MCP, self.INDEX_FINGER_TIP), (self.MIDDLE_FINGER_MCP, self.MIDDLE_FINGER_TIP),
+                         (self.RING_FINGER_MCP, self.RING_FINGER_TIP), (self.PINKY_MCP, self.PINKY_TIP)):
+            finger = pts[tip] - pts[mcp]
+            length = np.linalg.norm(finger)
+            if length > 1e-6:
+                bends.append(np.dot(finger, dorsal_if_right) / length)
+        if not bends:
+            return 0.0
+        # A right hand bends away from its back (negative); a left hand,
+        # read as if it were right, appears to bend toward it
+        return float(np.clip(np.mean(bends) / self.CURL_FULL_CONFIDENCE, -1.0, 1.0))
+
+    def handedness_evidence_palm_away(self, world_landmarks: List[Tuple[float, float, float]],
+                                      mirror_x: bool = False, flip_z: bool = False) -> float:
+        """
+        Signed per-frame handedness vote from hand geometry, assuming the back
+        of the hand faces the camera.
+
+        Returns:
+            Value in [-1, 1]: positive for left, negative for right, its size
+            how squarely the hand faces the camera; 0 when it is too close to
+            edge-on to tell
+        """
+        decided = self.infer_is_left_palm_away(world_landmarks, mirror_x, flip_z)
+        if decided is None:
+            return 0.0
+        return self._last_facing if decided else -self._last_facing
+
     def infer_is_left_palm_away(self, world_landmarks: List[Tuple[float, float, float]],
                                 mirror_x: bool = False, flip_z: bool = False) -> Optional[bool]:
         """
@@ -319,6 +382,7 @@ class GestureDetector:
         if norm < 1e-9:
             return None
         facing = toward_camera_z * dorsal_if_right[2] / norm
+        self._last_facing = min(1.0, abs(facing))
         if abs(facing) < self.PALM_EDGE_ON_THRESHOLD:
             return None
         return facing < 0

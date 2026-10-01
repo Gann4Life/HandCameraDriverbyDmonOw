@@ -12,7 +12,11 @@ import time
 import numpy as np
 from typing import List, Tuple, Optional
 from hand_data import HandData
-from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate, quat_slerp
+from hand_identity import HandDetection, HandIdentityTracker
+from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
+from utils.one_euro import (OneEuroFilter, QuaternionOneEuroFilter, ExponentialFilter,
+                            QuaternionExponentialFilter, PassThroughFilter)
+from utils.win_process import keep_running_in_background
 from utils.camera_utils import CameraCapture
 from utils.socket_client import SocketClient
 
@@ -20,6 +24,10 @@ from utils.socket_client import SocketClient
 # "facing": camera in front of the user, looking back at them (selfie view).
 # "pov":    camera looks the same way the user does (head/chest mounted).
 VIEW_MODES = ("facing", "pov")
+
+# Smoothing modes the 'f' key cycles through
+FILTER_MODES = ("one_euro", "ema", "none")
+FILTER_LABELS = {"one_euro": "One Euro", "ema": "EMA (previous)", "none": "none"}
 
 
 class HandTracker:
@@ -40,6 +48,14 @@ class HandTracker:
         """
         # Load configuration
         self.config = self.load_config(config_path)
+
+        # Keep full speed while the VR game has focus: a CPU-heavy foreground
+        # app otherwise starves a normal-priority background process
+        process_config = self.config.get('process', {})
+        for line in keep_running_in_background(process_config.get('priority', 'above_normal'),
+                                               process_config.get('disable_power_throttling', True)):
+            print(line)
+        self._last_slow_report = 0.0
 
         # Resolve view mode and handedness mapping
         tracking_config = self.config['tracking']
@@ -73,6 +89,13 @@ class HandTracker:
         # placed relative to the camera's distance in front of the user.
         self.flip_z = mode == 'facing'
         self.facing_distance = float(cam_config.get('facing_distance', 0.8))
+        identity_config = tracking_config.get('identity', {})
+        self.hand_identity = HandIdentityTracker(
+            continuity_radius=float(identity_config.get('continuity_radius', 0.15)),
+            memory_seconds=float(identity_config.get('memory_seconds', 0.4)),
+            switch_frames=int(identity_config.get('switch_frames', 6)),
+            duplicate_radius=float(identity_config.get('duplicate_radius', 0.05)),
+            user_left_is_image_left=not self.mirror_x)
 
         # Initialize MediaPipe Hands
         self.mp_hands = mp.solutions.hands
@@ -133,16 +156,16 @@ class HandTracker:
             hand: quat_from_euler_deg(*offsets.get(hand, [0.0, 0.0, 0.0]))
             for hand in ('left', 'right')
         }
-        # Fraction of each new orientation sample to follow (1.0 = no smoothing)
-        self.rotation_follow = min(1.0, max(0.05, float(self.calibration.get('rotation_follow', 0.5))))
-        self.last_rotation = {}
+        # Smoothing, per hand: image-plane position, depth (noisier, so
+        # filtered on its own) and rotation. 'f' in the preview cycles modes.
+        self.filter_config = self.calibration.get('filter', {})
+        mode = str(self.filter_config.get('mode', 'one_euro')).lower()
+        self.filter_mode = mode if mode in FILTER_MODES else 'one_euro'
+        self.build_filters()
         # Metric position: horizontal field of view of the camera, and how the
         # user's hand compares to MediaPipe's average-sized hand model
         self.hfov_deg = float(cam_config.get('hfov_deg', 70.0))
         self.hand_scale = float(self.calibration.get('hand_scale', 1.0))
-        # Fraction of each new position sample to follow (1.0 = no smoothing)
-        self.position_follow = min(1.0, max(0.05, float(self.calibration.get('position_follow', 0.7))))
-        self.depth_follow = min(1.0, max(0.05, float(self.calibration.get('depth_follow', 0.35))))
         self.last_camera_position = {}
 
         print("HandTracker initialized")
@@ -211,27 +234,70 @@ class HandTracker:
         y = -(landmarks[0][1] - 0.5) * 2.0 * half_width * (self.camera.height / self.camera.width)
         return (-x if self.mirror_x else x, y, -depth)
 
-    def smooth_camera_position(self, hand_type: str,
-                               position: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    def smooth_camera_position(self, hand_type: str, position: Tuple[float, float, float],
+                               t: float) -> Tuple[float, float, float]:
         """
-        Exponentially smooth a camera-space position. Depth is far noisier than
-        the image-plane axes, so it gets its own, usually heavier, filter.
+        Smooth a camera-space position. Depth is far noisier than the
+        image-plane axes, so it gets its own filter.
 
         Args:
             hand_type: "left" or "right"
             position: New camera-space sample
+            t: Sample time in seconds
 
         Returns:
             Smoothed position (also stored for the next frame)
         """
-        previous = self.last_camera_position.get(hand_type)
-        if previous is not None:
-            a, d = self.position_follow, self.depth_follow
-            position = (previous[0] + a * (position[0] - previous[0]),
-                        previous[1] + a * (position[1] - previous[1]),
-                        previous[2] + d * (position[2] - previous[2]))
+        x, y = self.position_filters[hand_type](position[:2], t)
+        (z,) = self.depth_filters[hand_type]((position[2],), t)
+        position = (x, y, z)
         self.last_camera_position[hand_type] = position
         return position
+
+    def build_filters(self):
+        """(Re)create the per-hand filters for the current filter_mode."""
+        config = self.filter_config
+        hands = ('left', 'right')
+        if self.filter_mode == 'one_euro':
+            def make(kind, cls, defaults):
+                s = dict(defaults, **config.get(kind, {}))
+                return {h: cls(s['min_cutoff'], s['beta'], config.get('d_cutoff', 1.0)) for h in hands}
+            self.position_filters = make('position', OneEuroFilter, {'min_cutoff': 1.0, 'beta': 1.5})
+            self.depth_filters = make('depth', OneEuroFilter, {'min_cutoff': 0.3, 'beta': 2.0})
+            self.rotation_filters = make('rotation', QuaternionOneEuroFilter, {'min_cutoff': 1.0, 'beta': 0.5})
+        elif self.filter_mode == 'ema':
+            follow = dict({'position': 0.7, 'depth': 0.35, 'rotation': 0.5}, **config.get('ema', {}))
+            self.position_filters = {h: ExponentialFilter(follow['position']) for h in hands}
+            self.depth_filters = {h: ExponentialFilter(follow['depth']) for h in hands}
+            self.rotation_filters = {h: QuaternionExponentialFilter(follow['rotation']) for h in hands}
+        else:
+            self.position_filters = {h: PassThroughFilter() for h in hands}
+            self.depth_filters = {h: PassThroughFilter() for h in hands}
+            self.rotation_filters = {h: PassThroughFilter() for h in hands}
+
+    def cycle_filter_mode(self):
+        """Switch to the next smoothing mode, for live A/B comparison."""
+        self.filter_mode = FILTER_MODES[(FILTER_MODES.index(self.filter_mode) + 1) % len(FILTER_MODES)]
+        self.build_filters()
+        print(f"Filter: {FILTER_LABELS[self.filter_mode]}")
+
+    SLOW_FRAME_SECONDS = 0.25
+
+    def report_slow_frame(self, t_frame: float, t_tracked: float, t_sent: float, t_done: float):
+        """
+        Print where the time went when one frame took far too long, at most
+        once per second. A frame normally takes ~20-40 ms; this is the
+        evidence for telling CPU starvation (tracking slow), a stuck driver
+        connection (sending slow) or a blocked preview window (display slow)
+        apart.
+        """
+        if t_done - t_frame < self.SLOW_FRAME_SECONDS or t_done - self._last_slow_report < 1.0:
+            return
+        self._last_slow_report = t_done
+        print(f"Slow frame: {(t_done - t_frame) * 1000:.0f} ms "
+              f"(tracking {(t_tracked - t_frame) * 1000:.0f}, "
+              f"sending {(t_sent - t_tracked) * 1000:.0f}, "
+              f"display {(t_done - t_sent) * 1000:.0f})")
 
     def reconnect_camera(self) -> bool:
         """
@@ -282,7 +348,22 @@ class HandTracker:
                 "debug": {"show_video": True, "show_landmarks": True, "show_fps": True, "log_gestures": False}
             }
     
-    def process_hand_landmarks(self, hand_landmarks, hand_world_landmarks, hand_label: str,
+    def handedness_evidence(self, hand_world_landmarks, handedness) -> float:
+        """
+        This frame's left/right vote for one hand, in [-1, 1] (> 0 is left).
+        Only a vote: HandIdentityTracker weighs it against continuity.
+
+        Seen from behind (POV), the hand's own shape is a far better signal
+        than MediaPipe's label, which assumes a palm-side selfie view.
+        """
+        if self.palm_away and hand_world_landmarks is not None:
+            world = [(lm.x, lm.y, lm.z) for lm in hand_world_landmarks.landmark]
+            return self.gesture_detector.handedness_evidence_palm_away(world, self.mirror_x, self.flip_z)
+        classification = handedness.classification[0]
+        is_left = (classification.label == "Left") != self.swap_hands
+        return classification.score if is_left else -classification.score
+
+    def process_hand_landmarks(self, hand_landmarks, hand_world_landmarks, hand_type: str,
                                frame_width: int, frame_height: int) -> HandData:
         """
         Process MediaPipe hand landmarks into HandData object.
@@ -290,7 +371,7 @@ class HandTracker:
         Args:
             hand_landmarks: MediaPipe hand landmarks (normalised image coordinates)
             hand_world_landmarks: MediaPipe world landmarks (metres), or None
-            hand_label: "Left" or "Right"
+            hand_type: "left" or "right", as decided by HandIdentityTracker
             frame_width: Frame width in pixels
             frame_height: Frame height in pixels
 
@@ -302,20 +383,10 @@ class HandTracker:
         for landmark in hand_landmarks.landmark:
             landmarks.append((landmark.x, landmark.y, landmark.z))
 
-        # Determine hand type
-        is_left = hand_label == "Left"
-        if self.swap_hands:
-            is_left = not is_left
+        is_left = hand_type == "left"
         world = None
         if hand_world_landmarks is not None:
             world = [(lm.x, lm.y, lm.z) for lm in hand_world_landmarks.landmark]
-            if self.palm_away:
-                # Seen from behind, the hand's own shape is a better handedness
-                # signal than MediaPipe's palm-view label
-                inferred = self.gesture_detector.infer_is_left_palm_away(world, self.mirror_x, self.flip_z)
-                if inferred is not None:
-                    is_left = inferred
-        hand_type = "left" if is_left else "right"
 
         # Wrist position in OpenVR camera space, in metres
         camera_position = None
@@ -325,7 +396,8 @@ class HandTracker:
             camera_position = self.last_camera_position.get(hand_type)
         if camera_position is None:
             camera_position = self.estimate_wrist_position_fallback(landmarks)
-        camera_position = self.smooth_camera_position(hand_type, camera_position)
+        now = time.perf_counter()
+        camera_position = self.smooth_camera_position(hand_type, camera_position, now)
 
         # Apply calibration: scale in camera space, tilt into HMD space, then offset
         scale = self.calibration['scale']
@@ -345,10 +417,7 @@ class HandTracker:
                                                                         self.palm_away, self.flip_z)
             rotation = quat_multiply(self.camera_rotation, rotation)
             rotation = quat_multiply(rotation, self.rotation_offsets[hand_type])
-            previous = self.last_rotation.get(hand_type)
-            if previous is not None:
-                rotation = quat_slerp(previous, rotation, self.rotation_follow)
-            self.last_rotation[hand_type] = rotation
+            rotation = self.rotation_filters[hand_type](rotation, now)
         else:
             rotation = (1.0, 0.0, 0.0, 0.0)
 
@@ -423,6 +492,8 @@ class HandTracker:
         if self.debug['show_fps']:
             cv2.putText(frame, f"FPS: {fps:.1f} (camera {self.camera.capture_fps:.0f})", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame, f"Filter [f]: {FILTER_LABELS[self.filter_mode]}", (10, frame.shape[0] - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
         
         # Draw hand information
         y_offset = 60
@@ -449,7 +520,7 @@ class HandTracker:
             print("Warning: Could not connect to driver. Will keep trying...")
         
         print("\nHand tracking active!")
-        print("Press 'q' to quit, 's' to swap left/right\n")
+        print("Press 'q' to quit, 's' to swap left/right, 'f' to cycle smoothing\n")
         
         try:
             while True:
@@ -465,25 +536,40 @@ class HandTracker:
                     # read_frame already waited for a frame; nothing more to wait for
                     continue
                 
+                t_frame = time.perf_counter()
+
                 # Convert to RGB for MediaPipe
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
+
                 # Process with MediaPipe
                 results = self.hands.process(frame_rgb)
-                
+                t_tracked = time.perf_counter()
+
                 # Prepare hand data
                 hands_data = []
                 
                 if results.multi_hand_landmarks and results.multi_handedness:
                     world_list = results.multi_hand_world_landmarks or [None] * len(results.multi_hand_landmarks)
-                    for hand_landmarks, hand_world, handedness in zip(results.multi_hand_landmarks, world_list,
-                                                                       results.multi_handedness):
-                        # Get hand label
-                        hand_label = handedness.classification[0].label
+
+                    # Decide left/right for the whole frame at once, with memory
+                    # of previous frames, so a one-frame misread or a duplicate
+                    # detection cannot teleport a hand to the other side
+                    detections = [
+                        HandDetection(i, (lm.landmark[0].x, lm.landmark[0].y),
+                                      self.handedness_evidence(world, handedness),
+                                      handedness.classification[0].score)
+                        for i, (lm, world, handedness) in enumerate(zip(results.multi_hand_landmarks, world_list,
+                                                                        results.multi_handedness))
+                    ]
+                    sides = self.hand_identity.assign(detections, t_tracked)
+
+                    for i, (hand_landmarks, hand_world) in enumerate(zip(results.multi_hand_landmarks, world_list)):
+                        if i not in sides:
+                            continue  # duplicate of a hand already kept
 
                         # Process hand
                         hand_data = self.process_hand_landmarks(
-                            hand_landmarks, hand_world, hand_label,
+                            hand_landmarks, hand_world, sides[i],
                             frame.shape[1], frame.shape[0]
                         )
                         hands_data.append(hand_data)
@@ -497,17 +583,12 @@ class HandTracker:
                             print(f"{hand_data.hand_type}: {hand_data.gesture} "
                                   f"T:{hand_data.trigger_value:.2f} G:{hand_data.grip_value:.2f}")
                 
-                # Two hands can never be the same side; if classification said
-                # so, the one further to the user's left is the left hand
-                if len(hands_data) == 2 and hands_data[0].hand_type == hands_data[1].hand_type:
-                    ordered = sorted(hands_data, key=lambda h: h.position[0])
-                    ordered[0].hand_type, ordered[1].hand_type = "left", "right"
-
                 # Send data to driver
                 for hand_data in hands_data:
                     protocol_string = hand_data.to_protocol_string()
                     self.socket_client.send(protocol_string)
-                
+                t_sent = time.perf_counter()
+
                 # Draw info overlay
                 if self.debug['show_video']:
                     self.draw_info(frame, hands_data, self.camera.get_fps())
@@ -521,7 +602,11 @@ class HandTracker:
                     if key == ord('s'):
                         self.swap_hands = not self.swap_hands
                         print(f"Hands {'swapped' if self.swap_hands else 'as detected'}")
-                
+                    if key == ord('f'):
+                        self.cycle_filter_mode()
+
+                self.report_slow_frame(t_frame, t_tracked, t_sent, time.perf_counter())
+
         except KeyboardInterrupt:
             print("\nInterrupted by user")
         except Exception as e:
