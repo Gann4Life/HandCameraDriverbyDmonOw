@@ -196,8 +196,18 @@ void HandTrackingListener::ListenThread()
 
 void HandTrackingListener::ProcessHandData( const std::string &data )
 {
-	// Parse protocol string: HAND:LEFT,X:0.5,Y:0.3,Z:-0.2,QW:1.0,QX:0.0,QY:0.0,QZ:0.0,TRIGGER:0.8,GRIP:0.0,GESTURE:POINT
+	// Parse protocol string: HAND:LEFT,X:0.5,Y:0.3,Z:-0.2,QW:1.0,QX:0.0,QY:0.0,QZ:0.0,TRIGGER:0.8,GRIP:0.0,GESTURE:POINT,
+	// TYPE:INDEX,CURL:0.10;0.20;0.30;0.40;0.50 (TYPE and CURL are newer; older trackers leave them out)
 	std::map<std::string, std::string> params = ParseProtocolString( data );
+
+	// The devices are added to SteamVR with the type the first message asks for
+	const int profile = static_cast<int>( params[ "TYPE" ] == "INDEX" ? ControllerProfile::Index : ControllerProfile::Touch );
+	int expected = -1;
+	if ( !requested_profile_.compare_exchange_strong( expected, profile ) && expected != profile && !warned_profile_change_ )
+	{
+		warned_profile_change_ = true;
+		DriverLog( "HandTrackingListener: the tracker asks for another controller type; restart SteamVR to switch" );
+	}
 
 	// Determine which hand this is for
 	MyControllerDeviceDriver *controller = nullptr;
@@ -247,6 +257,30 @@ void HandTrackingListener::ProcessHandData( const std::string &data )
 		float grip = std::stof( params[ "GRIP" ] );
 		controller->UpdateGripValue( grip );
 	}
+
+	// Finger curls: thumb;index;middle;ring;pinky
+	if ( params.count( "CURL" ) )
+	{
+		std::array<float, 5> curls{};
+		std::istringstream values( params[ "CURL" ] );
+		std::string value;
+		for ( size_t i = 0; i < curls.size() && std::getline( values, value, ';' ); i++ )
+		{
+			curls[ i ] = std::stof( value );
+		}
+		controller->UpdateFingerCurls( curls );
+	}
+}
+
+bool HandTrackingListener::RequestedProfile( ControllerProfile &profile ) const
+{
+	const int requested = requested_profile_.load();
+	if ( requested < 0 )
+	{
+		return false;
+	}
+	profile = static_cast<ControllerProfile>( requested );
+	return true;
 }
 
 std::map<std::string, std::string> HandTrackingListener::ParseProtocolString( const std::string &data )

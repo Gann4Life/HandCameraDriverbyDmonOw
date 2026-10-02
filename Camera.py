@@ -311,6 +311,8 @@ class HandTracker:
             return self.configure_depth_assist
         if key.startswith('gestures.'):
             return self.create_gesture_detector
+        if key == 'network.controller_type':
+            return None  # read on every send; the driver only switches after a SteamVR restart
         if key.startswith('network.'):
             return self.create_socket_client
         return None
@@ -676,11 +678,13 @@ class HandTracker:
         # world landmarks there are no features, so the old detector is the fallback.
         gesture_config = self.config['gestures']
         features = None
+        finger_curls: Tuple[float, ...] = ()
         scores: Dict[str, float] = {}
         if world is not None:
             features = compute_features(world, float(gesture_config['pinch_open']),
                                         float(gesture_config['pinch_closed']))
             trigger_value, grip_value = self.control_mapper(hand_type, features, now)
+            finger_curls = self.control_mapper.finger_curls(hand_type, features, now)
             scores = score_gestures(features, self.control_mapper.pinch_strength(features), gesture_config)
             gesture = self.gesture_classifier(hand_type, scores)
         else:
@@ -696,7 +700,8 @@ class HandTracker:
             trigger_value=trigger_value,
             grip_value=grip_value,
             landmarks=landmarks,
-            is_detected=True
+            is_detected=True,
+            finger_curls=finger_curls,
         )
         return TrackedHand(data=hand_data, camera_position=camera_position, camera_points=camera_points,
                            features=features, gesture_scores=scores)
@@ -843,8 +848,9 @@ class HandTracker:
                     print(f"{hand.data.hand_type}: {hand.data.gesture} "
                           f"T:{hand.data.trigger_value:.2f} G:{hand.data.grip_value:.2f}")
 
+        controller_type = str(self.config['network'].get('controller_type', 'touch'))
         for hand in tracked:
-            self.socket_client.send(hand.data.to_protocol_string())
+            self.socket_client.send(hand.data.to_protocol_string(controller_type))
         t_sent = time.perf_counter()
         self.last_timings = (t_frame, t_tracked, t_sent)
 

@@ -11,6 +11,9 @@ camera ──► Camera.py (Python, MediaPipe) ──TCP 127.0.0.1:65432──�
 
 `Camera.py` finds your hands in the camera image. The driver shows them to SteamVR as
 two **Oculus Touch controllers**, so any game that supports Touch controllers will show them.
+It can show them as **Valve Index controllers** instead (Settings → Driver connection →
+*Show hands as*, or `network.controller_type: "index"`): then games that support Index finger
+tracking also show each finger. Switching takes effect the next time SteamVR starts.
 
 ---
 
@@ -190,7 +193,8 @@ The order doesn't matter. `Camera.py` keeps retrying until the driver shows up.
    - `--swap-hands`: if left and right come out reversed.
    - `--rotate-180`: if the camera is mounted upside down.
 3. A preview window opens with the hand skeletons drawn on it. In SteamVR you should see
-   two Oculus Touch controllers that follow your hands.
+   two Oculus Touch (or Index) controllers that follow your hands. They appear once the tracker
+   connects, so SteamVR shows no controllers from this driver until it is running.
 
 The tracker keeps running at full speed in the background, even when the game has focus.
 
@@ -256,7 +260,9 @@ the Settings tab covers both, with a live preview.
 | Left and right are swapped all the time | Start with `--swap-hands`, or set `tracking.swap_hands: true`. If it only happens now and then, press `s`. |
 | Preview window is black, or shows the wrong camera | Wrong `device_id`. Also close any other app that's using the camera. |
 | "Camera stopped delivering frames" | The tracker reconnects on its own for up to 30 s (`camera.reconnect_timeout`). With a phone, check the USB cable or Wi-Fi and keep the Iriun app in the foreground. |
-| Hands don't show in SteamVR | Is the add-on enabled (5.3)? Is the manifest at the folder root (5.2)? Search `vrserver.txt` for `HandTrackCamVR`. |
+| Hands don't show in SteamVR | Is the tracker running? The controllers only appear once it connects. Is the add-on enabled (5.3)? Is the manifest at the folder root (5.2)? Search `vrserver.txt` for `HandTrackCamVR`. |
+| Changed *Show hands as* but SteamVR still shows the old controllers | Restart SteamVR. The driver picks the type from the first message after SteamVR starts. |
+| With Index, the game ignores the hands or the fingers don't move | Not every game reads Index finger tracking. Switch *Show hands as* back to Touch and restart SteamVR. |
 | Controllers show in SteamVR but not in the game | Enable controllers/hands in the game's own settings. Turn off your headset's real controllers, since they take the hand slots too. |
 | Copying the DLL fails ("used by another process") | Close SteamVR completely, including `vrserver.exe`, and try again. |
 | Low FPS | Use `model_complexity: 0` and connect the phone over USB. The overlay shows the camera FPS and the processing FPS separately, so you can tell which one is the bottleneck. |

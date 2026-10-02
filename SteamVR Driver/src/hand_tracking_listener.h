@@ -22,7 +22,7 @@
 #define closesocket close
 #endif
 
-class MyControllerDeviceDriver;
+#include "controller_device_driver.h"
 
 //-----------------------------------------------------------------------------
 // Purpose: Listens for hand tracking data from the Python script via socket
@@ -36,6 +36,10 @@ public:
 	bool Start( int port = 65432 );
 	void Stop();
 
+	// The controller type the tracker asked for in its first message, or false
+	// before any message arrived. Trackers that do not say get Touch.
+	bool RequestedProfile( ControllerProfile &profile ) const;
+
 private:
 	void ListenThread();
 	void ProcessHandData( const std::string &data );
@@ -43,6 +47,10 @@ private:
 
 	MyControllerDeviceDriver *left_controller_;
 	MyControllerDeviceDriver *right_controller_;
+
+	// -1 until the first message, then a ControllerProfile
+	std::atomic<int> requested_profile_{ -1 };
+	bool warned_profile_change_ = false;
 
 	std::atomic<bool> is_running_;
 	std::thread listen_thread_;

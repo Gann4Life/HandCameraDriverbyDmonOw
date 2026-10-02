@@ -60,3 +60,12 @@ class ControlMapper:
             self._filters[hand_type] = smoother
         trigger, grip = smoother(self.raw(features), t)
         return min(1.0, max(0.0, trigger)), min(1.0, max(0.0, grip))
+
+    def finger_curls(self, hand_type: str, features: HandFeatures, t: float) -> Tuple[float, ...]:
+        """Smoothed curl of each finger, thumb to pinky, for the Index finger inputs and skeleton."""
+        key = hand_type + ".curls"
+        smoother = self._filters.get(key)
+        if smoother is None:
+            smoother = OneEuroFilter(float(self.config["controls_min_cutoff"]), float(self.config["controls_beta"]))
+            self._filters[key] = smoother
+        return tuple(min(1.0, max(0.0, c)) for c in smoother(features.curl, t))

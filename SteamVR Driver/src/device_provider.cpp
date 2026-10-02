@@ -19,30 +19,8 @@ vr::EVRInitError MyDeviceProvider::Init( vr::IVRDriverContext *pDriverContext )
 	my_left_controller_device_ = std::make_unique< MyControllerDeviceDriver >( vr::TrackedControllerRole_LeftHand );
 	my_right_controller_device_ = std::make_unique< MyControllerDeviceDriver >( vr::TrackedControllerRole_RightHand );
 
-	// Now we need to tell vrserver about our controllers.
-	// The first argument is the serial number of the device, which must be unique across all devices.
-	// We get it from our driver settings when we instantiate,
-	// And can pass it out of the function with MyGetSerialNumber().
-	// Let's add the left hand controller first (there isn't a specific order).
-	// make sure we actually managed to create the device.
-	// TrackedDeviceAdded returning true means we have had our device added to SteamVR.
-	if ( !vr::VRServerDriverHost()->TrackedDeviceAdded( my_left_controller_device_->MyGetSerialNumber().c_str(), vr::TrackedDeviceClass_Controller, my_left_controller_device_.get() ) )
-	{
-		DriverLog( "Failed to create left controller device!" );
-		// We failed? Return early.
-		return vr::VRInitError_Driver_Unknown;
-	}
-
-
-	// Now, the right hand
-	// Make sure we actually managed to create the device.
-	// TrackedDeviceAdded returning true means we have had our device added to SteamVR.
-	if ( !vr::VRServerDriverHost()->TrackedDeviceAdded( my_right_controller_device_->MyGetSerialNumber().c_str(), vr::TrackedDeviceClass_Controller, my_right_controller_device_.get() ) )
-	{
-		DriverLog( "Failed to create right controller device!" );
-		// We failed? Return early.
-		return vr::VRInitError_Driver_Unknown;
-	}
+	// The controllers are added to SteamVR in RunFrame, once the tracker says
+	// which controller type to present them as (see AddControllers).
 
 	// Start hand tracking listener
 	hand_tracking_listener_ = std::make_unique<HandTrackingListener>( my_left_controller_device_.get(), my_right_controller_device_.get() );
@@ -77,8 +55,36 @@ bool MyDeviceProvider::ShouldBlockStandbyMode()
 // Drivers *can* do work here, but should ensure this work is relatively inexpensive.
 // A good thing to do here is poll for events from the runtime or applications
 //-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+// Purpose: Tell vrserver about our controllers, as the type the tracker asked for.
+// The type is fixed from here on: changing it needs a SteamVR restart.
+//-----------------------------------------------------------------------------
+void MyDeviceProvider::AddControllers( ControllerProfile profile )
+{
+	controllers_added_ = true;
+	DriverLog( "Adding the controllers as %s", profile == ControllerProfile::Index ? "Valve Index" : "Oculus Touch" );
+	// The first argument is the serial number of the device, which must be unique across all devices.
+	// We get it from our driver settings when we instantiate,
+	// And can pass it out of the function with MyGetSerialNumber().
+	// TrackedDeviceAdded returning true means we have had our device added to SteamVR.
+	for ( MyControllerDeviceDriver *device : { my_left_controller_device_.get(), my_right_controller_device_.get() } )
+	{
+		device->SetProfile( profile );
+		if ( !vr::VRServerDriverHost()->TrackedDeviceAdded( device->MyGetSerialNumber().c_str(), vr::TrackedDeviceClass_Controller, device ) )
+		{
+			DriverLog( "Failed to create controller device %s!", device->MyGetSerialNumber().c_str() );
+		}
+	}
+}
+
 void MyDeviceProvider::RunFrame()
 {
+	ControllerProfile profile;
+	if ( !controllers_added_ && hand_tracking_listener_ != nullptr && hand_tracking_listener_->RequestedProfile( profile ) )
+	{
+		AddControllers( profile );
+	}
+
 	// call our devices to run a frame
 	if ( my_left_controller_device_ != nullptr )
 	{

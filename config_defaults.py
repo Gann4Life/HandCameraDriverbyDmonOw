@@ -27,7 +27,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                      "duplicate_radius": 0.05, "order_weight": 1.5},
     },
     "process": {"priority": "above_normal", "disable_power_throttling": True},
-    "network": {"host": "127.0.0.1", "port": 65432},
+    "network": {"host": "127.0.0.1", "port": 65432, "controller_type": "touch"},
     "gestures": {"pinch_threshold": 0.05, "finger_extended_threshold": 0.6,
                  **CONTROL_DEFAULTS, **GESTURE_DEFAULTS},
     "calibration": {

@@ -16,6 +16,7 @@ class Apply(Enum):
     MODEL = "reloads the hand model"
     NEXT_START = "next start"
     RECONNECT = "reconnects to the driver"
+    STEAMVR = "restart SteamVR"
 
 
 @dataclass(frozen=True)
@@ -222,6 +223,10 @@ SETTINGS = (
             minimum=0.0, maximum=5.0, step=0.1, advanced=True),
 
     # Driver connection
+    Setting("network.controller_type", "Show hands as", "choice", "Driver connection", apply=Apply.STEAMVR,
+            choices=(("touch", "Oculus Touch controllers"), ("index", "Valve Index controllers (finger tracking)")),
+            help="What games see. Index also sends each finger's curl, so games that support Index show your "
+                 "fingers. Touch works in more games. Takes effect the next time SteamVR starts."),
     Setting("network.host", "Host", "text", "Driver connection", apply=Apply.RECONNECT, advanced=True),
     Setting("network.port", "Port", "int", "Driver connection", minimum=1024, maximum=65535, step=1,
             apply=Apply.RECONNECT, advanced=True),

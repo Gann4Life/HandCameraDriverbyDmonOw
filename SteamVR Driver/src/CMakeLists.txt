@@ -53,6 +53,8 @@ if(NOT OPENVR_LIBRARIES)
 		"  ${OPENVR_DIR}/lib")
 endif()
 
+set(HAND_SIMULATION_DIR "${OPENVR_DIR}/samples/drivers/drivers/handskeletonsimulation/src")
+
 message(STATUS "OpenVR SDK: ${OPENVR_DIR}")
 message(STATUS "Target arch: ${ARCH_TARGET}")
 
@@ -64,6 +66,8 @@ add_library(driver_${DRIVER_NAME} SHARED
 	controller_device_driver.cpp
 	hand_tracking_listener.cpp
 	"${OPENVR_DIR}/samples/drivers/utils/driverlog/driverlog.cpp"
+	# Valve's sample that turns finger curls into a hand skeleton (Index profile)
+	"${HAND_SIMULATION_DIR}/hand_simulation.cpp"
 )
 
 target_include_directories(driver_${DRIVER_NAME} PRIVATE
@@ -71,6 +75,9 @@ target_include_directories(driver_${DRIVER_NAME} PRIVATE
 	"${OPENVR_DIR}/headers"
 	"${OPENVR_DIR}/samples/drivers/utils/driverlog"
 	"${OPENVR_DIR}/samples/drivers/utils/vrmath"
+	# Last, for hand_simulation.h. The folder also has a controller_device_driver.h,
+	# but quoted includes find ours, next to the including file, first.
+	"${HAND_SIMULATION_DIR}"
 )
 
 target_link_libraries(driver_${DRIVER_NAME} PRIVATE "${OPENVR_LIBRARIES}")
