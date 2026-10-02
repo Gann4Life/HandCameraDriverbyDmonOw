@@ -1,8 +1,12 @@
-"""Live readout of what each hand sends to the driver."""
-from PySide6.QtWidgets import QFormLayout, QGroupBox, QLabel, QProgressBar, QVBoxLayout, QWidget
+"""Live readout of what each hand sends to the driver, and the finger features behind it."""
+from PySide6.QtWidgets import (QFormLayout, QGroupBox, QHBoxLayout, QLabel, QProgressBar, QScrollArea,
+                               QVBoxLayout, QWidget)
 
-from gui.style import HAND_COLORS
+from gui.style import HAND_COLORS, MUTED_COLOR
 from hand_data import TrackingFrame
+from hand_features import FINGERS
+
+PINCH_FINGERS = ("index", "middle", "ring", "pinky")
 
 
 class _HandReadout(QGroupBox):
@@ -23,7 +27,27 @@ class _HandReadout(QGroupBox):
         form.addRow("Position", self.position)
         form.addRow("Trigger", self.trigger)
         form.addRow("Grip", self.grip)
+
+        form.addRow(self._heading("Finger curl   (ext: old detector)"))
+        self.curls = {finger: self._bar(color) for finger in FINGERS}
+        for finger, bar in self.curls.items():
+            form.addRow(finger.capitalize(), bar)
+
+        form.addRow(self._heading("Thumb pinch"))
+        self.pinches = {finger: self._bar(color) for finger in PINCH_FINGERS}
+        for finger, bar in self.pinches.items():
+            form.addRow(f"to {finger}", bar)
+        self.index_palm = QLabel()
+        form.addRow("Index tip to palm", self.index_palm)
+        self.splay = QLabel()
+        form.addRow("Splay", self.splay)
         self.show_hand(None)
+
+    @staticmethod
+    def _heading(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setStyleSheet(f"color: {MUTED_COLOR.name()}; margin-top: 8px;")
+        return label
 
     @staticmethod
     def _bar(color: str) -> QProgressBar:
@@ -34,12 +58,14 @@ class _HandReadout(QGroupBox):
         return bar
 
     def show_hand(self, hand):
+        bars = [self.trigger, self.grip, *self.curls.values(), *self.pinches.values()]
         if hand is None:
             self.state.setText("no")
-            for label in (self.gesture, self.depth, self.position):
+            for label in (self.gesture, self.depth, self.position, self.index_palm, self.splay):
                 label.setText("-")
-            self.trigger.setValue(0)
-            self.grip.setValue(0)
+            for bar in bars:
+                bar.setValue(0)
+                bar.setFormat("%p%")
             return
         data = hand.data
         self.state.setText("yes")
@@ -49,15 +75,40 @@ class _HandReadout(QGroupBox):
         self.trigger.setValue(round(data.trigger_value * 100))
         self.grip.setValue(round(data.grip_value * 100))
 
+        features = hand.features
+        if features is None:
+            for bar in bars[2:]:
+                bar.setValue(0)
+            for label in (self.index_palm, self.splay):
+                label.setText("-")
+            return
+        for i, finger in enumerate(FINGERS):
+            extended = len(hand.legacy_extended) > i and hand.legacy_extended[i]
+            bar = self.curls[finger]
+            bar.setValue(round(features.curl[i] * 100))
+            bar.setFormat(f"%p%   {features.curl_deg[i]:.0f}°" + ("   ext" if extended else ""))
+        for i, finger in enumerate(PINCH_FINGERS):
+            bar = self.pinches[finger]
+            bar.setValue(round(features.pinch[i] * 100))
+            bar.setFormat(f"%p%   {features.pinch_distance[i]:.2f} palms")
+        self.index_palm.setText(f"{features.index_tip_to_palm:.2f} palms")
+        self.splay.setText("  ".join("-" if v != v else f"{v:.0f}°" for v in features.splay_deg))
 
-class LivePanel(QWidget):
+
+class LivePanel(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        row = QHBoxLayout()
         self._readouts = {side: _HandReadout(side) for side in ("left", "right")}
         for readout in self._readouts.values():
-            layout.addWidget(readout)
+            row.addWidget(readout)
+        layout.addLayout(row)
         layout.addStretch(1)
+        self.setWidget(content)
 
     def set_frame(self, frame: TrackingFrame):
         hands = {hand.data.hand_type: hand for hand in frame.hands}

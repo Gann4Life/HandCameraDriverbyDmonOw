@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from hand_features import HandFeatures
+
 # Landmark index pairs that form the hand skeleton (MediaPipe's HAND_CONNECTIONS)
 HAND_CONNECTIONS = (
     (0, 1), (1, 2), (2, 3), (3, 4),
@@ -70,6 +72,8 @@ class TrackedHand:
     data: HandData
     camera_position: Tuple[float, float, float]  # filtered wrist, OpenVR camera space (y up, -z forward)
     camera_points: Optional[np.ndarray] = None   # 21 x 3 joints in the same space, or None without a metric fit
+    features: Optional["HandFeatures"] = None     # curls, splay, pinch; None without world landmarks
+    legacy_extended: Tuple[bool, ...] = ()        # the old detector's per-finger extended test, for comparison
 
 
 @dataclass
