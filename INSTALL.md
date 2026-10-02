@@ -15,6 +15,11 @@ It can show them as **Valve Index controllers** instead (Settings → Driver con
 *Show hands as*, or `network.controller_type: "index"`): then games that support Index finger
 tracking also show each finger. Switching takes effect the next time SteamVR starts.
 
+> **Don't want to compile anything?** Download the ready-to-run zip from
+> [Releases](https://github.com/Gann4Life/HandCameraDriverbyDmonOw/releases), extract it and
+> run `HandCameraDriver.exe`. The app installs and updates its SteamVR driver itself
+> (**Add-ons** in the toolbar), so you can skip sections 2–5. This guide is for running from source.
+
 ---
 
 ## 1. What you need
@@ -105,6 +110,17 @@ If CMake says *"OpenVR SDK headers were not found"*, the submodule is missing. R
 
 ## 5. Install the driver into SteamVR
 
+The easy way: close SteamVR, start the app (`.venv\Scripts\python app.py`, section 7) and click
+**Add-ons** in the toolbar. It finds SteamVR, shows whether the driver is installed and up to date,
+and installs or updates it with one button; it also turns the driver back on if SteamVR disabled
+it. The app checks this when it starts and offers it when something is missing or older than
+the driver you built. The steps below do the same by hand.
+
+### Updating the driver
+After pulling new code, rebuild the driver (section 4), close SteamVR and click **Update** in
+**Add-ons**, or copy the files again as in 5.2. With the ready-to-run zip, the new app offers the
+update on its own the first time it starts.
+
 ### 5.1 Find your SteamVR folder
 By default it's `C:\Program Files (x86)\Steam\steamapps\common\SteamVR`. If you put Steam
 somewhere else: in Steam, go to **Library → SteamVR → right-click → Manage → Browse local files**.
@@ -179,8 +195,11 @@ The order doesn't matter. `Camera.py` keeps retrying until the driver shows up.
    It shows the camera with the hand skeletons, a 3D view of where each hand is placed, a live
    readout of what each hand sends, and all the settings. Most settings apply instantly while you
    watch the preview; the few that need more say so next to their name (for example "reopens the
-   camera"). **Save** (Ctrl+S) writes them to `config.json`; **Revert** goes back to the last save.
-   Hover over a setting's name for a short explanation.
+   camera"). Hover over a setting's name for a short explanation. The settings are on two tabs:
+   - **Preset**: what depends on where the camera is (section 8). Changes stay unsaved until
+     **Save preset** (Ctrl+S); **Discard changes** goes back to the preset as saved.
+   - **App settings**: the same for every preset (camera index, resolution, tracking model,
+     depth, driver connection). These are saved to `config.json` as soon as you change them.
 
    The command-line version still works, with an OpenCV preview window and keys instead of a
    settings panel:
@@ -217,22 +236,25 @@ The tracker keeps running at full speed in the background, even when the game ha
 
 ## 8. Calibrate
 
-In `app.py`, all of these are in the Settings tab and apply live, so you can adjust them while
-looking at the 3D view and the cm readout. With `Camera.py`, edit `config.json` and restart it.
+In `app.py`, all of these are in the Preset and App settings tabs and apply live, so you can
+adjust them while looking at the 3D view and the cm readout. With `Camera.py`, edit `config.json`
+and restart it.
 
 ### Presets
 Each camera position keeps its own settings in a **preset**: view, mirroring, placement
 (position offset, camera tilt, hand rotation), smoothing, gestures and hand identity. Switching preset puts all of them back, so tuning one
-position never undoes another. Settings marked *(all presets)* belong to the camera hardware or
-the whole app (camera index, resolution, field of view, tracking model, depth source, driver
-connection) and are the same in every preset.
+position never undoes another. They are the settings on the **Preset** tab. The **App settings**
+tab has the ones that belong to the camera hardware or the whole app (camera index, resolution,
+field of view, tracking model, depth source, driver connection): they are the same in every
+preset and save themselves.
 
 - **POV** and **Facing** are built in. You can change them, and **Restore default** puts them
   back as shipped; they can't be renamed or deleted.
 - **Duplicate...** makes a new preset from the settings in use, e.g. for a second camera
   position. Your own presets can be renamed and deleted.
-- **Save** stores the settings in use in the active preset. A *modified* tag next to the preset
-  means there are changes it doesn't have yet.
+- **Save preset** stores the settings in use in the active preset. An *unsaved changes* tag next to
+  the preset means there are changes it doesn't have yet; **Discard changes** drops them.
+  Switching preset or closing the app with unsaved changes asks first.
 
 Presets live in `config.json`: `preset` is the active one and `presets` holds yours, plus any
 built-in one you changed. Older configs with `calibration.pov` / `calibration.facing` are
@@ -260,7 +282,7 @@ the Settings tab covers both, with a live preview.
 | Left and right are swapped all the time | Start with `--swap-hands`, or set `tracking.swap_hands: true`. If it only happens now and then, press `s`. |
 | Preview window is black, or shows the wrong camera | Wrong `device_id`. Also close any other app that's using the camera. |
 | "Camera stopped delivering frames" | The tracker reconnects on its own for up to 30 s (`camera.reconnect_timeout`). With a phone, check the USB cable or Wi-Fi and keep the Iriun app in the foreground. |
-| Hands don't show in SteamVR | Is the tracker running? The controllers only appear once it connects. Is the add-on enabled (5.3)? Is the manifest at the folder root (5.2)? Search `vrserver.txt` for `HandTrackCamVR`. |
+| Hands don't show in SteamVR | Is the tracker running? The controllers only appear once it connects. Open **Add-ons** in the app: it shows whether the driver is installed, up to date and turned on. By hand: is the add-on enabled (5.3)? Is the manifest at the folder root (5.2)? Search `vrserver.txt` for `HandTrackCamVR`. |
 | Changed *Show hands as* but SteamVR still shows the old controllers | Restart SteamVR. The driver picks the type from the first message after SteamVR starts. |
 | With Index, the game ignores the hands or the fingers don't move | Not every game reads Index finger tracking. Switch *Show hands as* back to Touch and restart SteamVR. |
 | Controllers show in SteamVR but not in the game | Enable controllers/hands in the game's own settings. Turn off your headset's real controllers, since they take the hand slots too. |
@@ -283,7 +305,16 @@ What it needs:
 > model is non-commercial and non-redistributable, and the YOLO detector (Ultralytics) is
 > AGPL-3.0. Don't redistribute it or use it commercially without legal review.
 
-Install it into a **separate** environment, so the normal `.venv` stays as it is:
+The easy way is **Add-ons** in the app: it shows the license notice, then downloads and installs
+everything into its own environment (`.venv-wilor` from source, `depth\.venv` next to the
+ready-to-run exe), with progress in the window. The same installer runs by hand:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installers\install-depth.ps1 -Env .venv-wilor `
+  -Requirements requirements.txt -Constraints installers\depth-constraints.txt
+```
+
+Or set it up step by step, in a **separate** environment so the normal `.venv` stays as it is:
 
 ```powershell
 py -3.10 -m venv .venv-wilor

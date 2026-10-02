@@ -62,7 +62,8 @@ class WiLoRDepthAssist:
         import importlib.util
         missing = [m for m in ("torch", "wilor_mini") if importlib.util.find_spec(m) is None]
         if missing:
-            self.error = f"WiLoR is not installed in this environment (no {', '.join(missing)}); run from .venv-wilor"
+            self.error = (f"WiLoR is not installed in this environment (no {', '.join(missing)}); install it from "
+                          "Add-ons in the app, or run from .venv-wilor")
             return False
         self.error = None
         self.loading = self._pipe is None

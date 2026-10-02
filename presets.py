@@ -37,7 +37,7 @@ SHARED_KEYS = (
     "camera.hfov_deg", "camera.stall_timeout", "camera.reconnect_timeout",
     "tracking.max_hands", "tracking.detection_confidence", "tracking.tracking_confidence",
     "tracking.model_complexity", "tracking.depth_source", "tracking.depth_assist.",
-    "network.", "process.", "debug.",
+    "network.", "process.", "debug.", "addons.",
 )
 # Settings that used to be shared: presets saved before take the value in use
 FORMERLY_SHARED = ("calibration.rotation_offset_deg.left", "calibration.rotation_offset_deg.right")
@@ -140,6 +140,17 @@ def store(config: Dict[str, Any], name: Optional[str] = None) -> None:
         stored(config).pop(name, None)
     else:
         stored(config)[name] = current
+
+
+def without_unsaved(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    A copy of config with the active preset's settings as last saved: what to
+    write to the file when only the shared settings are being saved.
+    """
+    result = copy.deepcopy(config)
+    for key, value in values(config, active(config)).items():
+        set_value(result, key, value)
+    return result
 
 
 def create(config: Dict[str, Any], name: str) -> None:
