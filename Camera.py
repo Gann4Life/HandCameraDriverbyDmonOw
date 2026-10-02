@@ -311,6 +311,8 @@ class HandTracker:
             return self.configure_depth_assist
         if key.startswith('gestures.'):
             return self.create_gesture_detector
+        if key in ('network.controller_type', 'network.index_offset', 'network.index_rotation_deg'):
+            return None  # read every frame; the driver only switches type after a SteamVR restart
         if key.startswith('network.'):
             return self.create_socket_client
         return None
@@ -671,16 +673,19 @@ class HandTracker:
             rotation = self.rotation_filters[hand_type](rotation, now)
         else:
             rotation = (1.0, 0.0, 0.0, 0.0)
+        position, rotation = self.index_adjustment(hand_type, position, rotation)
 
         # Trigger, grip and the gesture name, from finger curl and pinch. Without
         # world landmarks there are no features, so the old detector is the fallback.
         gesture_config = self.config['gestures']
         features = None
+        finger_curls: Tuple[float, ...] = ()
         scores: Dict[str, float] = {}
         if world is not None:
             features = compute_features(world, float(gesture_config['pinch_open']),
                                         float(gesture_config['pinch_closed']))
             trigger_value, grip_value = self.control_mapper(hand_type, features, now)
+            finger_curls = self.control_mapper.finger_curls(hand_type, features, now)
             scores = score_gestures(features, self.control_mapper.pinch_strength(features), gesture_config)
             gesture = self.gesture_classifier(hand_type, scores)
         else:
@@ -696,10 +701,29 @@ class HandTracker:
             trigger_value=trigger_value,
             grip_value=grip_value,
             landmarks=landmarks,
-            is_detected=True
+            is_detected=True,
+            finger_curls=finger_curls,
         )
         return TrackedHand(data=hand_data, camera_position=camera_position, camera_points=camera_points,
                            features=features, gesture_scores=scores)
+
+    def index_adjustment(self, hand_type: str, position: Tuple[float, float, float],
+                         rotation: Tuple[float, float, float, float]):
+        """
+        Shown as Index controllers, move each hand from where a Touch sits in it
+        to where an Index does, in the controller's own frame. The settings are
+        for the left hand; the right one is its mirror image.
+        """
+        network = self.config['network']
+        if str(network.get('controller_type', 'touch')) != 'index':
+            return position, rotation
+        side = 1.0 if hand_type == 'left' else -1.0
+        ox, oy, oz = network.get('index_offset', (0.0, 0.0, 0.0))
+        pitch, yaw, roll = network.get('index_rotation_deg', (0.0, 0.0, 0.0))
+        dx, dy, dz = quat_rotate(rotation, (side * ox, oy, oz))
+        position = (position[0] + dx, position[1] + dy, position[2] + dz)
+        rotation = quat_multiply(rotation, quat_from_euler_deg(pitch, side * yaw, side * roll))
+        return position, rotation
 
     def calculate_palm_size(self, landmarks: List[Tuple[float, float, float]]) -> float:
         """
@@ -843,8 +867,9 @@ class HandTracker:
                     print(f"{hand.data.hand_type}: {hand.data.gesture} "
                           f"T:{hand.data.trigger_value:.2f} G:{hand.data.grip_value:.2f}")
 
+        controller_type = str(self.config['network'].get('controller_type', 'touch'))
         for hand in tracked:
-            self.socket_client.send(hand.data.to_protocol_string())
+            self.socket_client.send(hand.data.to_protocol_string(controller_type))
         t_sent = time.perf_counter()
         self.last_timings = (t_frame, t_tracked, t_sent)
 
