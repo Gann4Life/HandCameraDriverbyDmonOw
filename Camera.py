@@ -37,7 +37,8 @@ class HandTracker:
     def __init__(self, config_path: str = "config.json",
                  view_mode: Optional[str] = None,
                  swap_hands: Optional[bool] = None,
-                 rotate_180: Optional[bool] = None):
+                 rotate_180: Optional[bool] = None,
+                 depth_source: Optional[str] = None):
         """
         Initialize hand tracker with configuration.
 
@@ -46,6 +47,7 @@ class HandTracker:
             view_mode: "facing" or "pov"; overrides tracking.view_mode
             swap_hands: Extra left/right swap; overrides tracking.swap_hands
             rotate_180: Camera mounted upside down; overrides camera.rotate_180
+            depth_source: "mediapipe" or "wilor"; overrides tracking.depth_source
         """
         # Load configuration
         self.config = self.load_config(config_path)
@@ -173,7 +175,9 @@ class HandTracker:
         self.depth_assist_scale = float(self.depth_assist_config.get('scale', 1.0))
         self.depth_assist = None
         self.depth_source = 'mediapipe'
-        if str(tracking_config.get('depth_source', 'mediapipe')).lower() == 'wilor':
+        if depth_source is None:
+            depth_source = tracking_config.get('depth_source', 'mediapipe')
+        if str(depth_source).lower() == 'wilor':
             self.set_depth_source('wilor')
         # Metric position: horizontal field of view of the camera, and how the
         # user's hand compares to MediaPipe's average-sized hand model
@@ -720,6 +724,8 @@ def main():
                         help="Swap left/right on top of what the mode implies")
     parser.add_argument("--rotate-180", action="store_true", default=None,
                         help="Camera is mounted upside down")
+    parser.add_argument("--depth", choices=["mediapipe", "wilor"],
+                        help="Depth source; wilor is experimental and needs its own environment")
     args = parser.parse_args()
 
     # Windows' default 15.6 ms timer tick puts a floor under every
@@ -735,7 +741,8 @@ def main():
     try:
         # Create and run tracker
         tracker = HandTracker(args.config, view_mode=args.mode,
-                              swap_hands=args.swap_hands, rotate_180=args.rotate_180)
+                              swap_hands=args.swap_hands, rotate_180=args.rotate_180,
+                              depth_source=args.depth)
         tracker.run()
     finally:
         if timer_raised:
