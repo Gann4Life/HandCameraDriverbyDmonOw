@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QSplitter, QTabW
 
 from Camera import HandTracker
 from gui.camera_view import CameraView
+from gui.environments import relaunch, wilor_installed_here, wilor_launcher
 from gui.hand_view_3d import HandView3D
 from gui.live_panel import LivePanel
 from gui.log_panel import LogPanel, capture_output
@@ -150,7 +151,7 @@ class MainWindow(QMainWindow):
             return
         self.worker.request_stop()
         if wait:
-            self.worker.wait(5000)
+            self.worker.wait(10000)
 
     def _toggle_tracking(self):
         if self.worker is None:
@@ -174,6 +175,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(reason)
 
     def _on_settings_changed(self, changes: dict):
+        if changes.get("tracking.depth_source") == "wilor" and not wilor_installed_here():
+            self._switch_to_wilor_environment()
+            return
         self._update_title()
         self._sync_depth_action()
         if self.worker is not None:
@@ -191,7 +195,33 @@ class MainWindow(QMainWindow):
         self._update_title()
         if "tracking.depth_source" in rejected:
             QMessageBox.information(self, "WiLoR depth", "WiLoR could not be loaded, so standard depth stays on. "
-                                                         "Run install-depth.bat first; the Log tab has the details.")
+                                                         "The Log tab has the details.")
+
+    def _switch_to_wilor_environment(self):
+        """
+        WiLoR was asked for but isn't installed in this environment: restart the
+        app in the one where it is, or explain how to install it.
+        """
+        set_value(self.config, "tracking.depth_source", "mediapipe")
+        self.settings_panel.refresh()
+        self._sync_depth_action()
+        self._update_title()
+        launcher = wilor_launcher()
+        if launcher is None:
+            QMessageBox.information(self, "WiLoR depth", "WiLoR is not installed. Run install-depth.bat (release "
+                                                         "package) or see INSTALL.md section 10, then try again.")
+            return
+        answer = QMessageBox.question(self, "WiLoR depth",
+                                      "WiLoR is installed in its own environment. Restart the app there with "
+                                      "WiLoR depth on?\n\nYour settings are saved first.")
+        if answer != QMessageBox.Yes:
+            return
+        set_value(self.config, "tracking.depth_source", "wilor")
+        if not self.save_config():
+            return
+        self.stop_tracking(wait=True)
+        relaunch(*launcher, self.config_path)
+        self.close()
 
     def _sync_depth_action(self):
         self.depth_action.setChecked(get_value(self.config, "tracking.depth_source") == "wilor")

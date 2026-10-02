@@ -34,6 +34,26 @@ class LogStream(QObject):
             except (OSError, ValueError):
                 pass
 
+    # Libraries probe stdout like a real file (WiLoR's loaders read .encoding)
+    @property
+    def encoding(self) -> str:
+        return getattr(self._original, "encoding", None) or "utf-8"
+
+    @property
+    def errors(self) -> str:
+        return getattr(self._original, "errors", None) or "replace"
+
+    def isatty(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def fileno(self) -> int:
+        if self._original is None:
+            raise OSError("no underlying stream")
+        return self._original.fileno()
+
 
 class LogPanel(QPlainTextEdit):
     def __init__(self, parent=None):
