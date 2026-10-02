@@ -156,6 +156,7 @@ def make_depth_solver(config, w, h):
     tracker.hfov_deg = float(config["camera"].get("hfov_deg", 70.0))
     tracker.hand_scale = float(config.get("calibration", {}).get("hand_scale", 1.0))
     tracker.mirror_x = False
+    tracker.steady_hand_size = False  # raw model output, to compare backends as they are
 
     def depth(hand):
         lms = types.SimpleNamespace(landmark=[types.SimpleNamespace(x=u / w, y=v / h) for u, v in hand["kp2d"]])

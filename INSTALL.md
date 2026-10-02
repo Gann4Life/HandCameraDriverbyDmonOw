@@ -242,6 +242,7 @@ converted on load.
 | Camera is tilted compared to your head | `camera_rotation_deg`. |
 | Hands are too close or too far | Hold your wrist at a measured distance (e.g. 40 cm) and compare it with the cm the overlay shows. Fix it with `camera.hfov_deg` first, then `calibration.hand_scale`. |
 | Hands feel shaky or laggy | Press `f` to compare the filters, then adjust `calibration.filter`. A lower `min_cutoff` gives more smoothing; a higher `beta` gives less lag on fast moves. |
+| Hands drift toward and away from you | Turn on **Steady hand size** (`calibration.steady_hand_size`, on in the POV preset). It holds each hand at its recent median size, so its distance stops wobbling. |
 
 Don't use `calibrate.py`: it's older than the app and only sets `position_offset` and `scale`;
 the Settings tab covers both, with a live preview.

@@ -33,6 +33,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "calibration": {
         "scale": 1.0,
         "hand_scale": 1.0,
+        "steady_hand_size": False,
+        "hand_size_window": 90,
         "position_offset": [0.0, 0.0, 0.0],
         "camera_rotation_deg": [0.0, 0.0, 0.0],
         "rotation_offset_deg": copy.deepcopy(DEFAULT_ROTATION_OFFSET_DEG),

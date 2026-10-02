@@ -17,7 +17,8 @@ from utils.config_utils import get_value, set_value
 
 # Built-in presets, as changes to the factory defaults
 BUILTIN_PRESETS: Dict[str, Dict[str, Any]] = {
-    "POV": {"tracking.view_mode": "pov"},
+    # Seen from behind, the hand's apparent size wobbles more, and so does its depth
+    "POV": {"tracking.view_mode": "pov", "calibration.steady_hand_size": True},
     # Tuned live with a webcam facing the user, which shows a mirrored image
     "Facing": {
         "tracking.view_mode": "facing",

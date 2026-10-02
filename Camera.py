@@ -22,6 +22,7 @@ from hand_identity import HandDetection, HandIdentityTracker
 from depth_assist import WiLoRDepthAssist
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
 from utils.config_utils import get_value, set_value
+from utils.hand_size import HandSizeStabilizer
 from utils.one_euro import (OneEuroFilter, QuaternionOneEuroFilter, ExponentialFilter,
                             QuaternionExponentialFilter, PassThroughFilter)
 from utils.win_process import keep_running_in_background
@@ -184,6 +185,10 @@ class HandTracker:
         }
         # How the user's hand compares to MediaPipe's average-sized hand model
         self.hand_scale = float(self.calibration.get('hand_scale', 1.0))
+        # Hold each hand's model at its recent median size, so MediaPipe's
+        # size wobble doesn't become depth jitter
+        self.steady_hand_size = bool(self.calibration.get('steady_hand_size', False))
+        self.hand_size = HandSizeStabilizer(int(self.calibration.get('hand_size_window', 90)))
         # Smoothing, per hand: image-plane position, depth (noisier, so
         # filtered on its own) and rotation. 'f' in the preview cycles modes.
         self.filter_config = self.calibration.get('filter', {})
@@ -327,10 +332,11 @@ class HandTracker:
         """
         self.configure_view()
         self.build_filters()  # each hand's history belonged to the other
+        self.hand_size.reset()
         print("Hands swapped")
 
     def fit_hand(self, hand_landmarks, world: List[Tuple[float, float, float]],
-                 frame_width: int, frame_height: int) -> Optional[np.ndarray]:
+                 frame_width: int, frame_height: int, hand_type: Optional[str] = None) -> Optional[np.ndarray]:
         """
         Locate the hand in 3D by fitting MediaPipe's metric hand model to where
         its landmarks appear in the image (perspective-n-point).
@@ -343,12 +349,16 @@ class HandTracker:
             world: World landmarks in metres, centred on the hand
             frame_width: Frame width in pixels
             frame_height: Frame height in pixels
+            hand_type: "left" or "right", for the steady hand size (None skips it)
 
         Returns:
             21 x 3 joints in OpenVR camera space (y up, -z forward), wrist
             first, or None if the fit failed
         """
-        object_points = np.array(world, dtype=np.float64) * self.hand_scale
+        scale = self.hand_scale
+        if self.steady_hand_size and hand_type is not None:
+            scale *= self.hand_size(hand_type, world)
+        object_points = np.array(world, dtype=np.float64) * scale
         image_points = np.array([(lm.x * frame_width, lm.y * frame_height)
                                  for lm in hand_landmarks.landmark], dtype=np.float64)
         focal = (frame_width / 2.0) / math.tan(math.radians(self.hfov_deg) / 2.0)
@@ -624,7 +634,7 @@ class HandTracker:
         # Wrist position in OpenVR camera space, in metres
         fitted = None
         if world is not None:
-            fitted = self.fit_hand(hand_landmarks, world, frame_width, frame_height)
+            fitted = self.fit_hand(hand_landmarks, world, frame_width, frame_height, hand_type)
         camera_position = tuple(float(v) for v in fitted[0]) if fitted is not None else None
         if camera_position is None:
             camera_position = self.last_camera_position.get(hand_type)
