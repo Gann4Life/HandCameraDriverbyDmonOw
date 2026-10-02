@@ -161,7 +161,7 @@ class PresetBar(QWidget):
                                       QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if answer != QMessageBox.Yes:
             return
-        mode = str(self.config.get("tracking", {}).get("view_mode", "pov"))
+        mode = str(self.config.get("tracking", {}).get("view_mode", "facing"))
         presets.delete(self.config, name)
         self._apply(presets.MODE_PRESETS.get(mode, presets.DEFAULT_PRESET))
         self._changed()

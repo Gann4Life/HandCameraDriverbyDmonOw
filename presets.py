@@ -17,19 +17,32 @@ from utils.config_utils import get_value, set_value
 
 # Built-in presets, as changes to the factory defaults
 BUILTIN_PRESETS: Dict[str, Dict[str, Any]] = {
-    # Seen from behind, the hand's apparent size wobbles more, and so does its depth
-    "POV": {"tracking.view_mode": "pov", "calibration.steady_hand_size": True},
     # Tuned live with a webcam facing the user, which shows a mirrored image
     "Facing": {
         "tracking.view_mode": "facing",
         "camera.source_mirrored": True,
         "calibration.filter.position.beta": 1.41,
         "calibration.position_offset": [0.0, 0.0, -0.2],
+        "calibration.rotation_offset_deg.left": [0.0, 0.0, -90.0],
+        "calibration.rotation_offset_deg.right": [0.0, 0.0, 90.0],
+    },
+    # Seen from behind, the hand's apparent size wobbles more, and so does its depth
+    "POV": {
+        "tracking.view_mode": "pov",
+        "calibration.steady_hand_size": True,
+        "calibration.rotation_offset_deg.left": [0.0, 35.0, -115.0],
+        "calibration.rotation_offset_deg.right": [0.0, -35.0, 115.0],
     },
 }
 # The built-in preset for each view mode, for older configs and --mode
 MODE_PRESETS = {"pov": "POV", "facing": "Facing"}
-DEFAULT_PRESET = "POV"
+DEFAULT_PRESET = "Facing"
+# Built-in values of older releases. One still in a built-in preset, or in use
+# with one, was never tuned, so it moves to the current value.
+RETIRED_DEFAULTS = {
+    "calibration.rotation_offset_deg.left": [0.0, 0.0, -127.0],
+    "calibration.rotation_offset_deg.right": [0.0, 0.0, 127.0],
+}
 
 # Keys (and key prefixes, ending in ".") every preset shares
 SHARED_KEYS = (
@@ -41,7 +54,7 @@ SHARED_KEYS = (
 )
 # Settings that used to be shared: presets saved before take the value in use
 FORMERLY_SHARED = ("calibration.rotation_offset_deg.left", "calibration.rotation_offset_deg.right")
-FORMAT = 2
+FORMAT = 3
 # Top-level entries that are not settings
 META_KEYS = ("preset", "presets", "preset_format")
 
@@ -196,16 +209,22 @@ def migrate(config: Dict[str, Any]) -> None:
     from the factory defaults, plus that mode's placement.
     """
     if "preset" in config:
-        if config.get("preset_format", 1) < FORMAT:
+        version = config.get("preset_format", 1)
+        if version < 2:
             _adopt_formerly_shared(config)
+        if version < 3:
+            _forget_retired_defaults(config)
         config["preset_format"] = FORMAT
         return
     config["preset_format"] = FORMAT
+    for key, old in RETIRED_DEFAULTS.items():
+        if get_value(config, key) == old:
+            set_value(config, key, get_value(DEFAULT_CONFIG, key))
     calibration = config.setdefault("calibration", {})
     sections = {mode: calibration.pop(mode, None) for mode in MODE_PRESETS}
-    current_mode = str(get_value(config, "tracking.view_mode") or "pov").lower()
+    current_mode = str(get_value(config, "tracking.view_mode") or "facing").lower()
     if current_mode not in MODE_PRESETS:
-        current_mode = "pov"
+        current_mode = "facing"
     factory = snapshot(DEFAULT_CONFIG)
     changed = {key: value for key, value in snapshot(config).items() if factory.get(key) != value}
     changed.pop("tracking.view_mode", None)
@@ -235,3 +254,21 @@ def _adopt_formerly_shared(config: Dict[str, Any]) -> None:
             stored(config).pop(name, None)
         else:
             stored(config)[name] = preset
+
+
+def _forget_retired_defaults(config: Dict[str, Any]) -> None:
+    """Built-in presets drop the old defaults they were saved with; user presets keep theirs."""
+    for builtin in BUILTIN_PRESETS:
+        saved = stored(config).get(builtin)
+        if saved is None:
+            continue
+        for key, old in RETIRED_DEFAULTS.items():
+            if saved.get(key) == old:
+                saved[key] = default_values(builtin)[key]
+        if saved == default_values(builtin):
+            stored(config).pop(builtin)
+    name = active(config)
+    if is_builtin(name):
+        for key, old in RETIRED_DEFAULTS.items():
+            if get_value(config, key) == old:
+                set_value(config, key, values(config, name)[key])
