@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (QFormLayout, QGroupBox, QHBoxLayout, QLabel, QPro
 
 from gui.style import HAND_COLORS, MUTED_COLOR
 from hand_data import TrackingFrame
+from gesture_scores import GESTURES
 from hand_features import FINGERS
 
 PINCH_FINGERS = ("index", "middle", "ring", "pinky")
@@ -28,7 +29,12 @@ class _HandReadout(QGroupBox):
         form.addRow("Trigger", self.trigger)
         form.addRow("Grip", self.grip)
 
-        form.addRow(self._heading("Finger curl   (ext: old detector)"))
+        form.addRow(self._heading("Gesture scores"))
+        self.scores = {name: self._bar(color) for name in GESTURES}
+        for name, bar in self.scores.items():
+            form.addRow(name.replace("_", " ").capitalize(), bar)
+
+        form.addRow(self._heading("Finger curl"))
         self.curls = {finger: self._bar(color) for finger in FINGERS}
         for finger, bar in self.curls.items():
             form.addRow(finger.capitalize(), bar)
@@ -58,7 +64,7 @@ class _HandReadout(QGroupBox):
         return bar
 
     def show_hand(self, hand):
-        bars = [self.trigger, self.grip, *self.curls.values(), *self.pinches.values()]
+        bars = [self.trigger, self.grip, *self.scores.values(), *self.curls.values(), *self.pinches.values()]
         if hand is None:
             self.state.setText("no")
             for label in (self.gesture, self.depth, self.position, self.index_palm, self.splay):
@@ -82,11 +88,13 @@ class _HandReadout(QGroupBox):
             for label in (self.index_palm, self.splay):
                 label.setText("-")
             return
+        for name, bar in self.scores.items():
+            bar.setValue(round(hand.gesture_scores.get(name, 0.0) * 100))
+            bar.setFormat("%p%   ◀ active" if name == data.gesture else "%p%")
         for i, finger in enumerate(FINGERS):
-            extended = len(hand.legacy_extended) > i and hand.legacy_extended[i]
             bar = self.curls[finger]
             bar.setValue(round(features.curl[i] * 100))
-            bar.setFormat(f"%p%   {features.curl_deg[i]:.0f}°" + ("   ext" if extended else ""))
+            bar.setFormat(f"%p%   {features.curl_deg[i]:.0f}°")
         for i, finger in enumerate(PINCH_FINGERS):
             bar = self.pinches[finger]
             bar.setValue(round(features.pinch[i] * 100))
