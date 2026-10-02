@@ -76,8 +76,9 @@ SETTINGS = (
     Setting("camera.hfov_deg", "Field of view", "float", "Camera", minimum=30, maximum=130, step=1,
             decimals=0, unit="°", help="Horizontal field of view of the camera. Wrong values make hands "
                                        "look nearer or farther than they are."),
-    Setting("camera.source_mirrored", "Source already mirrored", "bool", "Camera", advanced=True,
-            help="Some phone-camera apps mirror the picture before sending it."),
+    Setting("camera.source_mirrored", "Source already mirrored", "bool", "Camera",
+            help="Phone front cameras often send a mirrored picture. To check, turn Mirror image off, face "
+                 "the camera and raise your right hand: if it shows on the right of the preview, turn this on."),
     Setting("camera.backend", "Capture backend", "choice", "Camera", advanced=True, apply=Apply.CAMERA,
             choices=(("auto", "Automatic"), ("msmf", "Media Foundation"), ("dshow", "DirectShow"))),
     Setting("camera.stall_timeout", "Reconnect after", "float", "Camera", advanced=True, minimum=0.5,
@@ -91,7 +92,8 @@ SETTINGS = (
     Setting("camera.facing_distance", "Distance to camera", "float", "View", minimum=0.2, maximum=3.0,
             step=0.05, unit=" m", help="Only for a camera in front of you."),
     Setting("tracking.swap_hands", "Swap left and right", "bool", "View",
-            help="Use it if your hands come out the wrong way round."),
+            help="Use it if your hands come out the wrong way round. If they also move the wrong way, "
+                 "check Source already mirrored instead."),
     Setting("tracking.palm_facing", "Palms face", "choice", "View", advanced=True,
             choices=(("mode", "Depends on camera position"), ("away", "Away from the camera"),
                      ("auto", "Detect automatically"))),
@@ -105,10 +107,12 @@ SETTINGS = (
             step=0.01, help="1 is an average hand. Raise it if your hands look too close."),
     Setting("calibration.scale", "Movement scale", "float", "Placement", minimum=0.2, maximum=3.0,
             step=0.05, help="Multiplies how far the hands move."),
-    Setting("calibration.{mode}.rotation_offset_deg.left", "Left hand rotation", "vec3", "Placement",
-            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True),
-    Setting("calibration.{mode}.rotation_offset_deg.right", "Right hand rotation", "vec3", "Placement",
-            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True),
+    Setting("calibration.rotation_offset_deg.left", "Left hand rotation", "vec3", "Placement",
+            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True,
+            help="How the controller sits in your hand. Shared by every camera position."),
+    Setting("calibration.rotation_offset_deg.right", "Right hand rotation", "vec3", "Placement",
+            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True,
+            help="How the controller sits in your hand. Shared by every camera position."),
 
     # Depth
     Setting("tracking.depth_source", "Depth source", "choice", "Depth",

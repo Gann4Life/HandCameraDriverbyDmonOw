@@ -31,6 +31,10 @@ from utils.socket_client import SocketClient
 # "pov":    camera looks the same way the user does (head/chest mounted).
 VIEW_MODES = ("facing", "pov")
 
+# How a Touch controller sits in the hand: rolled from the flat-hand frame
+# toward the thumb, [pitch, yaw, roll] degrees. The same for every camera position.
+DEFAULT_ROTATION_OFFSET_DEG = {"left": [0.0, 0.0, -127.0], "right": [0.0, 0.0, 127.0]}
+
 # Smoothing modes the 'f' key cycles through
 FILTER_MODES = ("one_euro", "ema", "none")
 FILTER_LABELS = {"one_euro": "One Euro", "ema": "EMA (previous)", "none": "none"}
@@ -113,7 +117,7 @@ class HandTracker:
         print("HandTracker initialized")
         print(f"Camera: {cam_config['width']}x{cam_config['height']} @ {cam_config['fps']}fps")
         print(f"Tracking: max {self.config['tracking']['max_hands']} hands")
-        print(f"View: {self.view_mode}, hands {'swapped' if self.swap_hands else 'as detected'}"
+        print(f"View: {self.view_mode}, hands {'swapped' if self.user_swap else 'as detected'}"
               f"{', rotated 180' if self.camera.rotate_180 else ''}")
         print(f"Network: {self.config['network']['host']}:{self.config['network']['port']}")
 
@@ -130,9 +134,12 @@ class HandTracker:
         # already be mirrored (some phone-camera apps do it) and flip_horizontal
         # mirrors it again.
         mirrored = bool(cam_config.get('source_mirrored', False)) != bool(cam_config['flip_horizontal'])
-        # MediaPipe labels handedness assuming a mirrored (selfie) image, so an
-        # unmirrored frame comes out with Left/Right swapped, whatever the mode.
-        self.swap_hands = (not mirrored) != bool(tracking_config.get('swap_hands', False))
+        # Mirroring reverses a hand's chirality in the image: a right hand
+        # looks like a left one. Every handedness cue read from the image has
+        # to be flipped back for a mirrored frame.
+        self.frame_mirrored = mirrored
+        # The user's manual correction, applied to the final left/right labels
+        self.user_swap = bool(tracking_config.get('swap_hands', False))
         # Image +X points to the user's right for POV, and to their left for an
         # unmirrored camera facing them; mirroring reverses either.
         self.mirror_x = (mode == "facing") != mirrored
@@ -168,7 +175,7 @@ class HandTracker:
         # (e.g. a head-mounted camera tilted down toward the hands: negative pitch)
         self.camera_rotation = quat_from_euler_deg(*self.calibration.get('camera_rotation_deg', [0.0, 0.0, 0.0]))
         # Per-hand correction so the controller model sits like the real hand
-        offsets = self.calibration.get('rotation_offset_deg', {})
+        offsets = self.calibration.get('rotation_offset_deg', DEFAULT_ROTATION_OFFSET_DEG)
         self.rotation_offsets = {
             hand: quat_from_euler_deg(*offsets.get(hand, [0.0, 0.0, 0.0]))
             for hand in ('left', 'right')
@@ -312,12 +319,11 @@ class HandTracker:
 
     def swap_identities(self):
         """
-        Manual correction: exchange the current identities now (and flip
-        MediaPipe's label vote, its only other input). Expects
+        Manual correction: swap which side each tracked hand is reported as.
+        The identity tracker keeps its own, unswapped, view. Expects
         tracking.swap_hands to be toggled already.
         """
         self.configure_view()
-        self.hand_identity.swap()
         self.build_filters()  # each hand's history belonged to the other
         print("Hands swapped")
 
@@ -546,6 +552,15 @@ class HandTracker:
             gestures.setdefault('finger_extended_threshold', 0.6)
             for key, value in {**CONTROL_DEFAULTS, **GESTURE_DEFAULTS}.items():
                 gestures.setdefault(key, value)
+            calibration = config.setdefault('calibration', {})
+            if 'rotation_offset_deg' not in calibration:
+                # Older files kept it per view mode, though it does not depend
+                # on the camera; the POV one is the one that was tuned
+                modes = [calibration.get(mode, {}) for mode in VIEW_MODES]
+                tuned = calibration.get('pov', {}).get('rotation_offset_deg')
+                calibration['rotation_offset_deg'] = copy.deepcopy(tuned or DEFAULT_ROTATION_OFFSET_DEG)
+                for section in modes:
+                    section.pop('rotation_offset_deg', None)
             return config
         except Exception as e:
             print(f"Error loading config: {e}")
@@ -557,7 +572,8 @@ class HandTracker:
                 "network": {"host": "127.0.0.1", "port": 65432},
                 "gestures": {"pinch_threshold": 0.05, "finger_extended_threshold": 0.6, **CONTROL_DEFAULTS,
                              **GESTURE_DEFAULTS},
-                "calibration": {"position_offset": [0.0, 0.0, 0.0], "scale": 1.0},
+                "calibration": {"position_offset": [0.0, 0.0, 0.0], "scale": 1.0,
+                                "rotation_offset_deg": copy.deepcopy(DEFAULT_ROTATION_OFFSET_DEG)},
                 "debug": {"show_video": True, "show_landmarks": True, "show_fps": True, "log_gestures": False}
             }
 
@@ -573,12 +589,17 @@ class HandTracker:
         enough to decide a flat hand but never to outvote a clear curl.
         """
         classification = handedness.classification[0]
-        mp_is_left = (classification.label == "Left") != self.swap_hands
+        # MediaPipe labels handedness assuming a mirrored (selfie) image, so
+        # its label is only right as-is for a mirrored frame
+        mp_is_left = (classification.label == "Left") == self.frame_mirrored
         mp_vote = classification.score if mp_is_left else -classification.score
         if hand_world_landmarks is None:
             return mp_vote
         world = [(lm.x, lm.y, lm.z) for lm in hand_world_landmarks.landmark]
+        # The curl vote reads the chirality the image shows, true only unmirrored
         curl = self.gesture_detector.handedness_evidence_curl(world)
+        if self.frame_mirrored:
+            curl = -curl
         if self.palm_away:
             secondary = self.gesture_detector.handedness_evidence_palm_away(world, self.mirror_x, self.flip_z)
         else:
@@ -809,6 +830,8 @@ class HandTracker:
                                                                 results.multi_handedness))
             ]
             sides = self.hand_identity.assign(detections, t_tracked)
+            if self.user_swap:
+                sides = {i: "right" if side == "left" else "left" for i, side in sides.items()}
 
             for i, (hand_landmarks, hand_world) in enumerate(zip(results.multi_hand_landmarks, world_list)):
                 if i not in sides:
