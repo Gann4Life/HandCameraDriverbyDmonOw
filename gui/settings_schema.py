@@ -55,7 +55,7 @@ WILOR_WARNING = (
     "WiLoR runs a large 3D hand model on the GPU next to your VR game.\n\n"
     "• High GPU load and several GB of video memory: the game may lose frame rate.\n"
     "• About 200 ms of extra lag on depth.\n"
-    "• NVIDIA GPU only, and a separate install (install-depth.bat, about 3 GB).\n"
+    "• NVIDIA GPU only, and a separate install from Add-ons (about 3 GB).\n"
     "• Personal, non-commercial use only (WiLoR CC BY-NC-ND, MANO, Ultralytics AGPL).\n\n"
     "Turn it on?"
 )

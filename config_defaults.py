@@ -50,6 +50,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
     },
     "debug": {"show_video": True, "show_landmarks": True, "show_fps": True, "log_gestures": False},
+    # The app checks the SteamVR driver when it starts and offers to install or update it
+    "addons": {"check_at_startup": True},
 }
 
 
