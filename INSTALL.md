@@ -48,7 +48,7 @@ need to install CMake separately.
 Open **PowerShell** and run:
 
 ```powershell
-git clone --recursive https://github.com/xxDMONxx/HandCameraDriverbyDmonOw.git
+git clone --recursive https://github.com/Gann4Life/HandCameraDriverbyDmonOw.git
 cd HandCameraDriverbyDmonOw
 ```
 
@@ -232,9 +232,9 @@ the tracker no longer reads.
 
 ## 10. Optional: WiLoR depth (experimental)
 
-Available only on the `experiment/3d-hand-mesh` branch. This mode uses a 3D hand-mesh
-model to get much steadier distance from the camera, at the cost of about 200 ms of
-extra depth lag.
+Available only on the `experiment/3d-hand-mesh` branch (`git switch experiment/3d-hand-mesh`).
+This mode uses a 3D hand-mesh model to get much steadier distance from the camera, at the
+cost of about 200 ms of extra depth lag.
 
 What it needs:
 - An NVIDIA GPU with about 1.5 GB of free VRAM.
