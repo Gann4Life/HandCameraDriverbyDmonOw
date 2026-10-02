@@ -30,6 +30,9 @@ class PresetBar(QWidget):
         self.modified_label.setToolTip("Settings changed since this preset was saved (Save keeps them, "
                                        "Revert drops them).")
 
+        self.save_button = QPushButton("Save")
+        self.save_button.setToolTip("Keep the settings in use in this preset (Ctrl+S)")
+        self.save_button.clicked.connect(self._save)
         self.duplicate_button = QPushButton("Duplicate...")
         self.duplicate_button.setToolTip("New preset from the settings in use")
         self.duplicate_button.clicked.connect(self._duplicate)
@@ -48,7 +51,7 @@ class PresetBar(QWidget):
         top.addWidget(self.combo, 1)
         top.addWidget(self.modified_label)
         buttons = QHBoxLayout()
-        for button in (self.duplicate_button, self.rename_button, self.delete_button, self.restore_button):
+        for button in (self.save_button, self.duplicate_button, self.rename_button, self.delete_button, self.restore_button):
             buttons.addWidget(button)
         buttons.addStretch(1)
         layout.addLayout(top)
@@ -70,6 +73,7 @@ class PresetBar(QWidget):
         self.combo.blockSignals(False)
         modified = presets.is_modified(self.config)
         self.modified_label.setVisible(modified)
+        self.save_button.setEnabled(modified)
         builtin = presets.is_builtin(active)
         self.rename_button.setEnabled(not builtin)
         self.delete_button.setEnabled(not builtin)

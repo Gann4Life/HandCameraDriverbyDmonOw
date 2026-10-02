@@ -110,10 +110,10 @@ SETTINGS = (
     Setting("calibration.scale", "Movement scale", "float", "Placement", minimum=0.2, maximum=3.0,
             step=0.05, help="Multiplies how far the hands move."),
     Setting("calibration.rotation_offset_deg.left", "Left hand rotation", "vec3", "Placement",
-            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True,
+            minimum=-180, maximum=180, step=1, decimals=0, unit="°",
             help="How the controller sits in your hand, the same for every camera position."),
     Setting("calibration.rotation_offset_deg.right", "Right hand rotation", "vec3", "Placement",
-            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True,
+            minimum=-180, maximum=180, step=1, decimals=0, unit="°",
             help="How the controller sits in your hand, the same for every camera position."),
 
     # Depth
