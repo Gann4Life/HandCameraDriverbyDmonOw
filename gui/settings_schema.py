@@ -107,10 +107,12 @@ SETTINGS = (
             step=0.01, help="1 is an average hand. Raise it if your hands look too close."),
     Setting("calibration.scale", "Movement scale", "float", "Placement", minimum=0.2, maximum=3.0,
             step=0.05, help="Multiplies how far the hands move."),
-    Setting("calibration.{mode}.rotation_offset_deg.left", "Left hand rotation", "vec3", "Placement",
-            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True),
-    Setting("calibration.{mode}.rotation_offset_deg.right", "Right hand rotation", "vec3", "Placement",
-            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True),
+    Setting("calibration.rotation_offset_deg.left", "Left hand rotation", "vec3", "Placement",
+            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True,
+            help="How the controller sits in your hand. Shared by every camera position."),
+    Setting("calibration.rotation_offset_deg.right", "Right hand rotation", "vec3", "Placement",
+            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True,
+            help="How the controller sits in your hand. Shared by every camera position."),
 
     # Depth
     Setting("tracking.depth_source", "Depth source", "choice", "Depth",

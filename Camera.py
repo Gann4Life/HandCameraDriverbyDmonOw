@@ -31,6 +31,10 @@ from utils.socket_client import SocketClient
 # "pov":    camera looks the same way the user does (head/chest mounted).
 VIEW_MODES = ("facing", "pov")
 
+# How a Touch controller sits in the hand: rolled from the flat-hand frame
+# toward the thumb, [pitch, yaw, roll] degrees. The same for every camera position.
+DEFAULT_ROTATION_OFFSET_DEG = {"left": [0.0, 0.0, -127.0], "right": [0.0, 0.0, 127.0]}
+
 # Smoothing modes the 'f' key cycles through
 FILTER_MODES = ("one_euro", "ema", "none")
 FILTER_LABELS = {"one_euro": "One Euro", "ema": "EMA (previous)", "none": "none"}
@@ -171,7 +175,7 @@ class HandTracker:
         # (e.g. a head-mounted camera tilted down toward the hands: negative pitch)
         self.camera_rotation = quat_from_euler_deg(*self.calibration.get('camera_rotation_deg', [0.0, 0.0, 0.0]))
         # Per-hand correction so the controller model sits like the real hand
-        offsets = self.calibration.get('rotation_offset_deg', {})
+        offsets = self.calibration.get('rotation_offset_deg', DEFAULT_ROTATION_OFFSET_DEG)
         self.rotation_offsets = {
             hand: quat_from_euler_deg(*offsets.get(hand, [0.0, 0.0, 0.0]))
             for hand in ('left', 'right')
@@ -548,6 +552,15 @@ class HandTracker:
             gestures.setdefault('finger_extended_threshold', 0.6)
             for key, value in {**CONTROL_DEFAULTS, **GESTURE_DEFAULTS}.items():
                 gestures.setdefault(key, value)
+            calibration = config.setdefault('calibration', {})
+            if 'rotation_offset_deg' not in calibration:
+                # Older files kept it per view mode, though it does not depend
+                # on the camera; the POV one is the one that was tuned
+                modes = [calibration.get(mode, {}) for mode in VIEW_MODES]
+                tuned = calibration.get('pov', {}).get('rotation_offset_deg')
+                calibration['rotation_offset_deg'] = copy.deepcopy(tuned or DEFAULT_ROTATION_OFFSET_DEG)
+                for section in modes:
+                    section.pop('rotation_offset_deg', None)
             return config
         except Exception as e:
             print(f"Error loading config: {e}")
@@ -559,7 +572,8 @@ class HandTracker:
                 "network": {"host": "127.0.0.1", "port": 65432},
                 "gestures": {"pinch_threshold": 0.05, "finger_extended_threshold": 0.6, **CONTROL_DEFAULTS,
                              **GESTURE_DEFAULTS},
-                "calibration": {"position_offset": [0.0, 0.0, 0.0], "scale": 1.0},
+                "calibration": {"position_offset": [0.0, 0.0, 0.0], "scale": 1.0,
+                                "rotation_offset_deg": copy.deepcopy(DEFAULT_ROTATION_OFFSET_DEG)},
                 "debug": {"show_video": True, "show_landmarks": True, "show_fps": True, "log_gestures": False}
             }
 
