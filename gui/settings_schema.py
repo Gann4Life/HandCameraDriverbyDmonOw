@@ -172,6 +172,11 @@ SETTINGS = (
                  "\"Gesture picked at\", so gestures do not flicker."),
     Setting("gestures.gesture_confirm_frames", "Gesture confirm frames", "int", "Gestures", minimum=1,
             maximum=15, step=1, advanced=True, help="Frames a new gesture must lead before it is picked."),
+    Setting("gestures.finger_closed_start", "Finger closed from", "float", "Gestures", advanced=True,
+            help="Curl where a finger starts to count as closed for gestures. Lower it if a gesture needs "
+                 "fingers closed and you cannot curl them far enough."),
+    Setting("gestures.finger_closed_full", "Finger closed at", "float", "Gestures", advanced=True,
+            help="Curl where a finger fully counts as closed for gestures."),
     Setting("gestures.thumb_closed_start", "Thumb tucked from", "float", "Gestures", advanced=True,
             help="Thumb curl where a closed hand starts to count as a fist rather than a thumbs up."),
     Setting("gestures.thumb_closed_full", "Thumb tucked at", "float", "Gestures", advanced=True),

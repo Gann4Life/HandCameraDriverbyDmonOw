@@ -15,6 +15,8 @@ DEFAULTS = {
     "gesture_enter": 0.6,          # a gesture needs this score to be picked
     "gesture_exit": 0.4,           # ... and is kept until it drops below this
     "gesture_confirm_frames": 3,   # frames a new gesture must lead before it is picked
+    "finger_closed_start": 0.25,   # finger curl where a finger starts to count as closed
+    "finger_closed_full": 0.65,    # ... and fully counts as closed
     "thumb_closed_start": 0.2,     # thumb curl where it starts to count as tucked in (fist, not thumbs up)
     "thumb_closed_full": 0.5,
 }
@@ -34,17 +36,19 @@ def score_gestures(features: HandFeatures, pinch: float, config: Dict) -> Dict[s
     Returns:
         Score per gesture name, 0..1
     """
-    thumb, index, middle, ring, pinky = features.curl
-    closed = (index + middle + ring + pinky) / 4.0
-    others_closed = (middle + ring + pinky) / 3.0
-    thumb_tucked = ramp(thumb, float(config["thumb_closed_start"]), float(config["thumb_closed_full"]))
+    # How closed each finger is, as a soft yes/no; a gesture scores as well as
+    # its worst-matching finger (fuzzy AND), so "open" needs every finger open,
+    # not just most of them on average
+    start, full = float(config["finger_closed_start"]), float(config["finger_closed_full"])
+    index, middle, ring, pinky = (ramp(c, start, full) for c in features.curl[1:])
+    thumb = ramp(features.curl[0], float(config["thumb_closed_start"]), float(config["thumb_closed_full"]))
     return {
-        "OPEN": (1.0 - closed) * (1.0 - pinch),
-        "FIST": closed * thumb_tucked,
-        "POINT": (1.0 - index) * others_closed,
+        "OPEN": min(1 - index, 1 - middle, 1 - ring, 1 - pinky, 1 - pinch),
+        "FIST": min(index, middle, ring, pinky, thumb),
+        "POINT": min(1 - index, middle, ring, pinky),
         "PINCH": pinch,
-        "THUMBS_UP": closed * (1.0 - thumb_tucked),
-        "PEACE": (1.0 - index) * (1.0 - middle) * (ring + pinky) / 2.0,
+        "THUMBS_UP": min(index, middle, ring, pinky, 1 - thumb),
+        "PEACE": min(1 - index, 1 - middle, ring, pinky),
     }
 
 
