@@ -248,10 +248,12 @@ The system is configured via `config.json`. Here's a complete reference:
 
 1. **Start SteamVR** (make sure it's running before starting hand tracking)
 
-2. **Run the hand tracking script:**
+2. **Run the hand tracking app:**
    ```bash
-   python Camera.py
+   python app.py
    ```
+   It shows the camera, a 3D view of the tracked hands and every setting, applied live.
+   `python Camera.py` is the command-line version with a plain preview window.
 
 3. **Position your hands** in front of the camera (about 30-60cm away works best)
 

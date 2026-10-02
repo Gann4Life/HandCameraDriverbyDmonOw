@@ -11,6 +11,14 @@ camera ──► Camera.py (Python, MediaPipe) ──TCP 127.0.0.1:65432──�
 
 `Camera.py` finds your hands in the camera image. The driver shows them to SteamVR as
 two **Oculus Touch controllers**, so any game that supports Touch controllers will show them.
+It can show them as **Valve Index controllers** instead (Settings → Driver connection →
+*Show hands as*, or `network.controller_type: "index"`): then games that support Index finger
+tracking also show each finger. Switching takes effect the next time SteamVR starts.
+
+> **Don't want to compile anything?** Download the ready-to-run zip from
+> [Releases](https://github.com/Gann4Life/HandCameraDriverbyDmonOw/releases), extract it and
+> run `HandCameraDriver.exe`. The app installs and updates its SteamVR driver itself
+> (**Add-ons** in the toolbar), so you can skip sections 2–5. This guide is for running from source.
 
 ---
 
@@ -102,6 +110,17 @@ If CMake says *"OpenVR SDK headers were not found"*, the submodule is missing. R
 
 ## 5. Install the driver into SteamVR
 
+The easy way: close SteamVR, start the app (`.venv\Scripts\python app.py`, section 7) and click
+**Add-ons** in the toolbar. It finds SteamVR, shows whether the driver is installed and up to date,
+and installs or updates it with one button; it also turns the driver back on if SteamVR disabled
+it. The app checks this when it starts and offers it when something is missing or older than
+the driver you built. The steps below do the same by hand.
+
+### Updating the driver
+After pulling new code, rebuild the driver (section 4), close SteamVR and click **Update** in
+**Add-ons**, or copy the files again as in 5.2. With the ready-to-run zip, the new app offers the
+update on its own the first time it starts.
+
 ### 5.1 Find your SteamVR folder
 By default it's `C:\Program Files (x86)\Steam\steamapps\common\SteamVR`. If you put Steam
 somewhere else: in Steam, go to **Library → SteamVR → right-click → Manage → Browse local files**.
@@ -159,7 +178,8 @@ ALVR's own hand tracking and controller emulation
    - `source_mirrored`: set it to `true` only if your camera app already mirrors the
      image like a selfie. Iriun doesn't by default, so leave it at `false`.
    - `rotate_180`: set it to `true` if the camera is mounted upside down.
-3. Set `tracking.view_mode` to `"pov"` or `"facing"` (see section 1).
+3. Pick the preset for your camera position (see section 1): in the app, **Preset** at the top
+   of the Settings tab; in `config.json`, `"preset": "POV"` or `"preset": "Facing"`.
 
 ---
 
@@ -168,16 +188,32 @@ ALVR's own hand tracking and controller emulation
 The order doesn't matter. `Camera.py` keeps retrying until the driver shows up.
 
 1. Start SteamVR (with the headset connected).
-2. Start the tracker:
+2. Start the tracker app:
+   ```powershell
+   .venv\Scripts\python app.py
+   ```
+   It shows the camera with the hand skeletons, a 3D view of where each hand is placed, a live
+   readout of what each hand sends, and all the settings. Most settings apply instantly while you
+   watch the preview; the few that need more say so next to their name (for example "reopens the
+   camera"). Hover over a setting's name for a short explanation. The settings are on two tabs:
+   - **Preset**: what depends on where the camera is (section 8). Changes stay unsaved until
+     **Save preset** (Ctrl+S); **Discard changes** goes back to the preset as saved.
+   - **App settings**: the same for every preset (camera index, resolution, tracking model,
+     depth, driver connection). These are saved to `config.json` as soon as you change them.
+
+   The command-line version still works, with an OpenCV preview window and keys instead of a
+   settings panel:
    ```powershell
    .venv\Scripts\python Camera.py
    ```
    Options:
-   - `--mode pov` or `--mode facing`: overrides `view_mode` from the config.
+   - `--preset NAME`: use that preset (`POV`, `Facing` or one of yours) instead of the last one used.
+   - `--mode pov` or `--mode facing`: use that mode's built-in preset.
    - `--swap-hands`: if left and right come out reversed.
    - `--rotate-180`: if the camera is mounted upside down.
 3. A preview window opens with the hand skeletons drawn on it. In SteamVR you should see
-   two Oculus Touch controllers that follow your hands.
+   two Oculus Touch (or Index) controllers that follow your hands. They appear once the tracker
+   connects, so SteamVR shows no controllers from this driver until it is running.
 
 The tracker keeps running at full speed in the background, even when the game has focus.
 
@@ -200,9 +236,31 @@ The tracker keeps running at full speed in the background, even when the game ha
 
 ## 8. Calibrate
 
-All values are in `config.json`. Restart `Camera.py` after you change them. POV and Facing
-have **separate** calibration values, under `calibration.pov` and `calibration.facing`.
+In `app.py`, all of these are in the Preset and App settings tabs and apply live, so you can
+adjust them while looking at the 3D view and the cm readout. With `Camera.py`, edit `config.json`
+and restart it.
 
+### Presets
+Each camera position keeps its own settings in a **preset**: view, mirroring, placement
+(position offset, camera tilt, hand rotation), smoothing, gestures and hand identity. Switching preset puts all of them back, so tuning one
+position never undoes another. They are the settings on the **Preset** tab. The **App settings**
+tab has the ones that belong to the camera hardware or the whole app (camera index, resolution,
+field of view, tracking model, depth source, driver connection): they are the same in every
+preset and save themselves.
+
+- **POV** and **Facing** are built in. You can change them, and **Restore default** puts them
+  back as shipped; they can't be renamed or deleted.
+- **Duplicate...** makes a new preset from the settings in use, e.g. for a second camera
+  position. Your own presets can be renamed and deleted.
+- **Save preset** stores the settings in use in the active preset. An *unsaved changes* tag next to
+  the preset means there are changes it doesn't have yet; **Discard changes** drops them.
+  Switching preset or closing the app with unsaved changes asks first.
+
+Presets live in `config.json`: `preset` is the active one and `presets` holds yours, plus any
+built-in one you changed. Older configs with `calibration.pov` / `calibration.facing` are
+converted on load.
+
+### What to change
 | Problem in VR | What to change |
 |---|---|
 | Hands are rotated compared to your real hands | `rotation_offset_deg.left` / `.right`, in degrees `[x, y, z]`. A POV camera usually needs a z value: the reference setup uses `-127` for the left hand and `127` for the right. Adjust in steps of 10–20°. |
@@ -210,9 +268,10 @@ have **separate** calibration values, under `calibration.pov` and `calibration.f
 | Camera is tilted compared to your head | `camera_rotation_deg`. |
 | Hands are too close or too far | Hold your wrist at a measured distance (e.g. 40 cm) and compare it with the cm the overlay shows. Fix it with `camera.hfov_deg` first, then `calibration.hand_scale`. |
 | Hands feel shaky or laggy | Press `f` to compare the filters, then adjust `calibration.filter`. A lower `min_cutoff` gives more smoothing; a higher `beta` gives less lag on fast moves. |
+| Hands drift toward and away from you | Turn on **Steady hand size** (`calibration.steady_hand_size`, on in the POV preset). It holds each hand at its recent median size, so its distance stops wobbling. |
 
-Don't use `calibrate.py`: it's older than the per-mode calibration and writes keys that
-the tracker no longer reads.
+Don't use `calibrate.py`: it's older than the app and only sets `position_offset` and `scale`;
+the Settings tab covers both, with a live preview.
 
 ---
 
@@ -223,7 +282,9 @@ the tracker no longer reads.
 | Left and right are swapped all the time | Start with `--swap-hands`, or set `tracking.swap_hands: true`. If it only happens now and then, press `s`. |
 | Preview window is black, or shows the wrong camera | Wrong `device_id`. Also close any other app that's using the camera. |
 | "Camera stopped delivering frames" | The tracker reconnects on its own for up to 30 s (`camera.reconnect_timeout`). With a phone, check the USB cable or Wi-Fi and keep the Iriun app in the foreground. |
-| Hands don't show in SteamVR | Is the add-on enabled (5.3)? Is the manifest at the folder root (5.2)? Search `vrserver.txt` for `HandTrackCamVR`. |
+| Hands don't show in SteamVR | Is the tracker running? The controllers only appear once it connects. Open **Add-ons** in the app: it shows whether the driver is installed, up to date and turned on. By hand: is the add-on enabled (5.3)? Is the manifest at the folder root (5.2)? Search `vrserver.txt` for `HandTrackCamVR`. |
+| Changed *Show hands as* but SteamVR still shows the old controllers | Restart SteamVR. The driver picks the type from the first message after SteamVR starts. |
+| With Index, the game ignores the hands or the fingers don't move | Not every game reads Index finger tracking. Switch *Show hands as* back to Touch and restart SteamVR. |
 | Controllers show in SteamVR but not in the game | Enable controllers/hands in the game's own settings. Turn off your headset's real controllers, since they take the hand slots too. |
 | Copying the DLL fails ("used by another process") | Close SteamVR completely, including `vrserver.exe`, and try again. |
 | Low FPS | Use `model_complexity: 0` and connect the phone over USB. The overlay shows the camera FPS and the processing FPS separately, so you can tell which one is the bottleneck. |
@@ -244,7 +305,16 @@ What it needs:
 > model is non-commercial and non-redistributable, and the YOLO detector (Ultralytics) is
 > AGPL-3.0. Don't redistribute it or use it commercially without legal review.
 
-Install it into a **separate** environment, so the normal `.venv` stays as it is:
+The easy way is **Add-ons** in the app: it shows the license notice, then downloads and installs
+everything into its own environment (`.venv-wilor` from source, `depth\.venv` next to the
+ready-to-run exe), with progress in the window. The same installer runs by hand:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installers\install-depth.ps1 -Env .venv-wilor `
+  -Requirements requirements.txt -Constraints installers\depth-constraints.txt
+```
+
+Or set it up step by step, in a **separate** environment so the normal `.venv` stays as it is:
 
 ```powershell
 py -3.10 -m venv .venv-wilor
@@ -254,7 +324,9 @@ py -3.10 -m venv .venv-wilor
 .venv-wilor\Scripts\python -m pip install --no-build-isolation -r requirements.txt -r requirements-wilor.txt "numpy<2"
 ```
 
-Then run `.venv-wilor\Scripts\python Camera.py` and press `b`. The models download the first
+Then run `.venv-wilor\Scripts\python app.py` and turn on **WiLoR depth** in the toolbar (it
+asks for confirmation and lists the costs first), or run `.venv-wilor\Scripts\python Camera.py`
+and press `b`. While it is on, the status bar shows its rate and GPU memory. The models download the first
 time, which takes a while. After that, loading takes about 10 s. When it's on, the overlay
 shows `Depth [b]: WiLoR N Hz`.
 

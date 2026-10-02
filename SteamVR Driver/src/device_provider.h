@@ -23,6 +23,9 @@ public:
 	void Cleanup() override;
 
 private:
+	void AddControllers( ControllerProfile profile );
+
+	bool controllers_added_ = false;
 	std::unique_ptr<MyControllerDeviceDriver> my_left_controller_device_;
 	std::unique_ptr<MyControllerDeviceDriver> my_right_controller_device_;
 	std::unique_ptr<HandTrackingListener> hand_tracking_listener_;

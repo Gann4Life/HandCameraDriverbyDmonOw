@@ -2,6 +2,7 @@
 #include "controller_device_driver.h"
 
 #include "driverlog.h"
+#include "hand_simulation.h"
 #include "vrmath.h"
 
 // Let's create some variables for strings used in getting settings.
@@ -66,6 +67,10 @@ MyControllerDeviceDriver::MyControllerDeviceDriver( vr::ETrackedControllerRole r
 	hand_rotation_qz_ = 0.0f;
 	trigger_value_ = 0.0f;
 	grip_value_ = 0.0f;
+	for ( auto &curl : finger_curls_ )
+	{
+		curl = 0.0f;
+	}
 
 	// Here's an example of how to use our logging wrapper around IVRDriverLog
 	// In SteamVR logs (SteamVR Hamburger Menu > Developer Settings > Web console) drivers have a prefix of
@@ -93,71 +98,137 @@ vr::EVRInitError MyControllerDeviceDriver::Activate( uint32_t unObjectId )
 	// Let's begin setting up the properties now we've got our container.
 	// A list of properties available is contained in vr::ETrackedDeviceProperty.
 
-	// First, let's set the model number.
-	vr::VRProperties()->SetStringProperty( container, vr::Prop_ModelNumber_String, my_controller_model_number_.c_str() );
-
 	// Let's tell SteamVR our role which we received from the constructor earlier.
 	vr::VRProperties()->SetInt32Property( container, vr::Prop_ControllerRoleHint_Int32, my_controller_role_ );
-
-
-	// Now let's set up our inputs
-
-	// Present as an Oculus Touch controller. Games ship bindings for Touch but
-	// have never heard of a custom controller type, and under SteamVR Input even
-	// the hand pose is an action that only reaches the game through a binding;
-	// without one the hands simply do not appear. The profile, render models and
-	// legacy bindings all come from SteamVR's own bundled oculus driver.
-	const bool is_left = my_controller_role_ == vr::TrackedControllerRole_LeftHand;
-	vr::VRProperties()->SetStringProperty( container, vr::Prop_ControllerType_String, "oculus_touch" );
-	vr::VRProperties()->SetStringProperty( container, vr::Prop_InputProfilePath_String, "{oculus}/input/touch_profile.json" );
-	vr::VRProperties()->SetStringProperty( container, vr::Prop_RenderModelName_String, is_left ? "oculus_quest2_controller_left" : "oculus_quest2_controller_right" );
-	vr::VRProperties()->SetStringProperty( container, vr::Prop_ManufacturerName_String, "Oculus" );
 
 	// Other drivers (e.g. a streaming headset's own controllers) may claim the
 	// same hand roles. Higher numbers win the hand assignment.
 	vr::VRProperties()->SetInt32Property( container, vr::Prop_ControllerHandSelectionPriority_Int32, 1000 );
 
-	// Let's set up handles for all of our components.
-	// Even though these are also defined in our input profile,
-	// We need to get handles to them to update the inputs.
-	// Ones hand tracking has no equivalent for are created anyway and held at
-	// rest, because bindings expect every Touch component to exist.
-
-	// Face buttons: A/B on the right controller, X/Y on the left
-	const char *primary = is_left ? "/input/x" : "/input/a";
-	const char *secondary = is_left ? "/input/y" : "/input/b";
-	vr::VRDriverInput()->CreateBooleanComponent( container, ( std::string( primary ) + "/click" ).c_str(), &input_handles_[ MyComponent_primary_click ] );
-	vr::VRDriverInput()->CreateBooleanComponent( container, ( std::string( primary ) + "/touch" ).c_str(), &input_handles_[ MyComponent_primary_touch ] );
-	vr::VRDriverInput()->CreateBooleanComponent( container, ( std::string( secondary ) + "/click" ).c_str(), &input_handles_[ MyComponent_secondary_click ] );
-	vr::VRDriverInput()->CreateBooleanComponent( container, ( std::string( secondary ) + "/touch" ).c_str(), &input_handles_[ MyComponent_secondary_touch ] );
-
-	// CreateScalarComponent requires:
-	// EVRScalarType - whether the device can give an absolute position, or just one relative to where it was last. We
-	// can do it absolute.
-	// EVRScalarUnits - whether the devices has two "sides", like a joystick. This makes the range of valid inputs -1
-	// to 1. Otherwise, it's 0 to 1. Triggers are one-sided, the joystick two-sided.
-	vr::VRDriverInput()->CreateScalarComponent( container, "/input/trigger/value", &input_handles_[ MyComponent_trigger_value ], vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedOneSided );
-	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/trigger/touch", &input_handles_[ MyComponent_trigger_touch ] );
-
-	vr::VRDriverInput()->CreateScalarComponent( container, "/input/grip/value", &input_handles_[ MyComponent_grip_value ], vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedOneSided );
-	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/grip/touch", &input_handles_[ MyComponent_grip_touch ] );
-
-	vr::VRDriverInput()->CreateScalarComponent( container, "/input/joystick/x", &input_handles_[ MyComponent_joystick_x ], vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedTwoSided );
-	vr::VRDriverInput()->CreateScalarComponent( container, "/input/joystick/y", &input_handles_[ MyComponent_joystick_y ], vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedTwoSided );
-	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/joystick/click", &input_handles_[ MyComponent_joystick_click ] );
-	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/joystick/touch", &input_handles_[ MyComponent_joystick_touch ] );
-
-	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/thumbrest/touch", &input_handles_[ MyComponent_thumbrest_touch ] );
+	// Present as a real controller. Games ship bindings for Touch and Index but
+	// have never heard of a custom controller type, and under SteamVR Input even
+	// the hand pose is an action that only reaches the game through a binding;
+	// without one the hands simply do not appear. The profiles, render models and
+	// legacy bindings all come from the drivers bundled with SteamVR.
+	if ( profile_ == ControllerProfile::Index )
+	{
+		CreateIndexComponents( container );
+	}
+	else
+	{
+		CreateTouchComponents( container );
+	}
 
 	// Let's create our haptic component.
 	// These are global across the device, and you can only have one per device.
 	vr::VRDriverInput()->CreateHapticComponent( container, "/output/haptic", &input_handles_[ MyComponent_haptic ] );
+
+	// SteamVR wants skeletal data as soon as the skeleton exists
+	UpdateSkeleton();
 
 	my_pose_update_thread_ = std::thread( &MyControllerDeviceDriver::MyPoseUpdateThread, this );
 
 	// We've activated everything successfully!
 	// Let's tell SteamVR that by saying we don't have any errors.
 	return vr::VRInitError_None;
+}
+
+// CreateScalarComponent requires:
+// EVRScalarType - whether the device can give an absolute position, or just one relative to where it was last. We
+// can do it absolute.
+// EVRScalarUnits - whether the devices has two "sides", like a joystick. This makes the range of valid inputs -1
+// to 1. Otherwise, it's 0 to 1. Triggers are one-sided, the joystick two-sided.
+static void CreateOneSided( vr::PropertyContainerHandle_t container, const char *path, vr::VRInputComponentHandle_t *handle )
+{
+	vr::VRDriverInput()->CreateScalarComponent( container, path, handle, vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedOneSided );
+}
+
+static void CreateTwoSided( vr::PropertyContainerHandle_t container, const char *path, vr::VRInputComponentHandle_t *handle )
+{
+	vr::VRDriverInput()->CreateScalarComponent( container, path, handle, vr::VRScalarType_Absolute, vr::VRScalarUnits_NormalizedTwoSided );
+}
+
+void MyControllerDeviceDriver::CreateTouchComponents( vr::PropertyContainerHandle_t container )
+{
+	const bool is_left = my_controller_role_ == vr::TrackedControllerRole_LeftHand;
+	// Default to the model number a real Quest 2 controller reports (see the constructor),
+	// since some games pick per-controller hand offsets from it.
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_ModelNumber_String, my_controller_model_number_.c_str() );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_ControllerType_String, "oculus_touch" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_InputProfilePath_String, "{oculus}/input/touch_profile.json" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_RenderModelName_String, is_left ? "oculus_quest2_controller_left" : "oculus_quest2_controller_right" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_ManufacturerName_String, "Oculus" );
+
+	const std::string primary = is_left ? "/input/x" : "/input/a";
+	const std::string secondary = is_left ? "/input/y" : "/input/b";
+	vr::VRDriverInput()->CreateBooleanComponent( container, ( primary + "/click" ).c_str(), &input_handles_[ MyComponent_primary_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, ( primary + "/touch" ).c_str(), &input_handles_[ MyComponent_primary_touch ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, ( secondary + "/click" ).c_str(), &input_handles_[ MyComponent_secondary_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, ( secondary + "/touch" ).c_str(), &input_handles_[ MyComponent_secondary_touch ] );
+
+	CreateOneSided( container, "/input/trigger/value", &input_handles_[ MyComponent_trigger_value ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/trigger/touch", &input_handles_[ MyComponent_trigger_touch ] );
+
+	CreateOneSided( container, "/input/grip/value", &input_handles_[ MyComponent_grip_value ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/grip/touch", &input_handles_[ MyComponent_grip_touch ] );
+
+	CreateTwoSided( container, "/input/joystick/x", &input_handles_[ MyComponent_joystick_x ] );
+	CreateTwoSided( container, "/input/joystick/y", &input_handles_[ MyComponent_joystick_y ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/joystick/click", &input_handles_[ MyComponent_joystick_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/joystick/touch", &input_handles_[ MyComponent_joystick_touch ] );
+
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/thumbrest/touch", &input_handles_[ MyComponent_thumbrest_touch ] );
+}
+
+void MyControllerDeviceDriver::CreateIndexComponents( vr::PropertyContainerHandle_t container )
+{
+	const bool is_left = my_controller_role_ == vr::TrackedControllerRole_LeftHand;
+	// What a real Index controller reports, for games that pick hand offsets from it
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_ModelNumber_String, is_left ? "Knuckles Left" : "Knuckles Right" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_ControllerType_String, "knuckles" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_InputProfilePath_String, "{indexcontroller}/input/index_controller_profile.json" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_RenderModelName_String,
+		is_left ? "{indexcontroller}valve_controller_knu_1_0_left" : "{indexcontroller}valve_controller_knu_1_0_right" );
+	vr::VRProperties()->SetStringProperty( container, vr::Prop_ManufacturerName_String, "Valve" );
+
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/a/click", &input_handles_[ MyComponent_primary_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/a/touch", &input_handles_[ MyComponent_primary_touch ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/b/click", &input_handles_[ MyComponent_secondary_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/b/touch", &input_handles_[ MyComponent_secondary_touch ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/system/click", &input_handles_[ MyComponent_system_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/system/touch", &input_handles_[ MyComponent_system_touch ] );
+
+	CreateOneSided( container, "/input/trigger/value", &input_handles_[ MyComponent_trigger_value ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/trigger/touch", &input_handles_[ MyComponent_trigger_touch ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/trigger/click", &input_handles_[ MyComponent_trigger_click ] );
+
+	// Index grip: value is how far the fingers close around it, force how hard they squeeze
+	CreateOneSided( container, "/input/grip/value", &input_handles_[ MyComponent_grip_value ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/grip/touch", &input_handles_[ MyComponent_grip_touch ] );
+	CreateOneSided( container, "/input/grip/force", &input_handles_[ MyComponent_grip_force ] );
+
+	CreateTwoSided( container, "/input/thumbstick/x", &input_handles_[ MyComponent_joystick_x ] );
+	CreateTwoSided( container, "/input/thumbstick/y", &input_handles_[ MyComponent_joystick_y ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/thumbstick/click", &input_handles_[ MyComponent_joystick_click ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/thumbstick/touch", &input_handles_[ MyComponent_joystick_touch ] );
+
+	CreateTwoSided( container, "/input/trackpad/x", &input_handles_[ MyComponent_trackpad_x ] );
+	CreateTwoSided( container, "/input/trackpad/y", &input_handles_[ MyComponent_trackpad_y ] );
+	vr::VRDriverInput()->CreateBooleanComponent( container, "/input/trackpad/touch", &input_handles_[ MyComponent_trackpad_touch ] );
+	CreateOneSided( container, "/input/trackpad/force", &input_handles_[ MyComponent_trackpad_force ] );
+
+	CreateOneSided( container, "/input/finger/index", &input_handles_[ MyComponent_finger_index ] );
+	CreateOneSided( container, "/input/finger/middle", &input_handles_[ MyComponent_finger_middle ] );
+	CreateOneSided( container, "/input/finger/ring", &input_handles_[ MyComponent_finger_ring ] );
+	CreateOneSided( container, "/input/finger/pinky", &input_handles_[ MyComponent_finger_pinky ] );
+
+	vr::VRDriverInput()->CreateSkeletonComponent( container,
+		is_left ? "/input/skeleton/left" : "/input/skeleton/right",
+		is_left ? "/skeleton/hand/left" : "/skeleton/hand/right",
+		"/pose/raw",					// the skeleton's origin, from the render model
+		vr::VRSkeletalTracking_Partial, // fingers come from a camera, not measured per joint
+		nullptr, 0,						// default grip limits
+		&input_handles_[ MyComponent_skeleton ] );
 }
 
 //-----------------------------------------------------------------------------
@@ -225,7 +296,23 @@ vr::DriverPose_t MyControllerDeviceDriver::GetPose()
 	};
 
 	// Rotate our offset by the hmd quaternion (so the controllers are always facing towards us), and add then add the position of the hmd to put it into position.
-	const vr::HmdVector3_t position = hmd_position + ( offset_position * hmd_orientation );
+	vr::HmdVector3_t position = hmd_position + ( offset_position * hmd_orientation );
+
+	// The tracker places a Touch controller in the hand. An Index controller's
+	// origin sits elsewhere in the hand, so move it to where an Index would be
+	// held. Both render models give the pose of the hand on the controller
+	// ("openxr_handmodel"): Touch (-0.01125, -0.00183, 0.10195) m at (-39.4, 0, 0)
+	// deg, Index (-0.015, -0.015, 0.13) m at (-40, -5, 0) deg, left hand; the right
+	// is the mirror image. Index = Touch * handmodel_touch * inverse(handmodel_index).
+	if ( profile_ == ControllerProfile::Index )
+	{
+		const bool is_left = my_controller_role_ == vr::TrackedControllerRole_LeftHand;
+		const float side = is_left ? 1.f : -1.f;
+		const vr::HmdQuaternion_t touch_to_index = { 0.99903, 0.00523, side * 0.04362, side * 0.00023 };
+		const vr::HmdVector3_t touch_to_index_offset = { side * -0.0076f, 0.0145f, -0.0287f };
+		position = position + ( touch_to_index_offset * pose.qRotation );
+		pose.qRotation = pose.qRotation * touch_to_index;
+	}
 
 	// copy our position to our pose
 	pose.vecPosition[ 0 ] = position.v[ 0 ];
@@ -309,23 +396,73 @@ void MyControllerDeviceDriver::MyRunFrame()
 	float trigger_val = trigger_value_.load();
 	float grip_val = grip_value_.load();
 
-	// Touch has no trigger/grip click; games read the analog value (and a
-	// "touch" when the finger rests on it)
-	vr::VRDriverInput()->UpdateScalarComponent( input_handles_[ MyComponent_trigger_value ], trigger_val, 0 );
-	vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ MyComponent_trigger_touch ], trigger_val > 0.1f, 0 );
+	// Games read the analog values, and a "touch" when the finger rests on them
+	SetScalar( MyComponent_trigger_value, trigger_val );
+	SetBoolean( MyComponent_trigger_touch, trigger_val > 0.1f );
+	SetScalar( MyComponent_grip_value, grip_val );
+	SetBoolean( MyComponent_grip_touch, grip_val > 0.1f );
 
-	vr::VRDriverInput()->UpdateScalarComponent( input_handles_[ MyComponent_grip_value ], grip_val, 0 );
-	vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ MyComponent_grip_touch ], grip_val > 0.1f, 0 );
+	// Index only (the others have no handle on Touch). The trigger clicks near
+	// the end of its travel, with some slack so it does not chatter; squeezing
+	// starts once the hand is mostly closed.
+	trigger_clicked_ = trigger_val > ( trigger_clicked_ ? 0.85f : 0.95f );
+	SetBoolean( MyComponent_trigger_click, trigger_clicked_ );
+	SetScalar( MyComponent_grip_force, grip_val > 0.7f ? ( grip_val - 0.7f ) / 0.3f : 0.f );
+	SetScalar( MyComponent_finger_index, finger_curls_[ 1 ].load() );
+	SetScalar( MyComponent_finger_middle, finger_curls_[ 2 ].load() );
+	SetScalar( MyComponent_finger_ring, finger_curls_[ 3 ].load() );
+	SetScalar( MyComponent_finger_pinky, finger_curls_[ 4 ].load() );
+	UpdateSkeleton();
 
-	// No hand-tracking equivalent yet for face buttons, joystick or thumbrest:
+	// No hand-tracking equivalent yet for face buttons, stick, trackpad or thumbrest:
 	// hold them at rest (gestures could be mapped here later)
 	for ( MyComponent button : { MyComponent_primary_click, MyComponent_primary_touch, MyComponent_secondary_click,
-			  MyComponent_secondary_touch, MyComponent_joystick_click, MyComponent_joystick_touch, MyComponent_thumbrest_touch } )
+			  MyComponent_secondary_touch, MyComponent_system_click, MyComponent_system_touch, MyComponent_joystick_click,
+			  MyComponent_joystick_touch, MyComponent_thumbrest_touch, MyComponent_trackpad_touch } )
 	{
-		vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ button ], false, 0 );
+		SetBoolean( button, false );
 	}
-	vr::VRDriverInput()->UpdateScalarComponent( input_handles_[ MyComponent_joystick_x ], 0.f, 0 );
-	vr::VRDriverInput()->UpdateScalarComponent( input_handles_[ MyComponent_joystick_y ], 0.f, 0 );
+	for ( MyComponent axis : { MyComponent_joystick_x, MyComponent_joystick_y, MyComponent_trackpad_x, MyComponent_trackpad_y,
+			  MyComponent_trackpad_force } )
+	{
+		SetScalar( axis, 0.f );
+	}
+}
+
+void MyControllerDeviceDriver::SetBoolean( MyComponent component, bool value )
+{
+	if ( input_handles_[ component ] != vr::k_ulInvalidInputComponentHandle )
+	{
+		vr::VRDriverInput()->UpdateBooleanComponent( input_handles_[ component ], value, 0 );
+	}
+}
+
+void MyControllerDeviceDriver::SetScalar( MyComponent component, float value )
+{
+	if ( input_handles_[ component ] != vr::k_ulInvalidInputComponentHandle )
+	{
+		vr::VRDriverInput()->UpdateScalarComponent( input_handles_[ component ], value, 0 );
+	}
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Pose the hand skeleton from the finger curls (Index only). Valve's
+// hand skeleton simulation sample turns curls into bone transforms.
+//-----------------------------------------------------------------------------
+void MyControllerDeviceDriver::UpdateSkeleton()
+{
+	if ( input_handles_[ MyComponent_skeleton ] == vr::k_ulInvalidInputComponentHandle )
+	{
+		return;
+	}
+	const MyFingerCurls curls = { finger_curls_[ 0 ].load(), finger_curls_[ 1 ].load(), finger_curls_[ 2 ].load(),
+		finger_curls_[ 3 ].load(), finger_curls_[ 4 ].load() };
+	const MyFingerSplays splays = { 0.f, 0.f, 0.f, 0.f, 0.f };
+	vr::VRBoneTransform_t transforms[ eBone_Count ];
+	MyHandSimulation().ComputeSkeletonTransforms( my_controller_role_, curls, splays, transforms );
+	// The same hand with and without a controller: there is no controller to hold
+	vr::VRDriverInput()->UpdateSkeletonComponent( input_handles_[ MyComponent_skeleton ], vr::VRSkeletalMotionRange_WithController, transforms, eBone_Count );
+	vr::VRDriverInput()->UpdateSkeletonComponent( input_handles_[ MyComponent_skeleton ], vr::VRSkeletalMotionRange_WithoutController, transforms, eBone_Count );
 }
 
 
@@ -420,4 +557,17 @@ void MyControllerDeviceDriver::UpdateTriggerValue( float value )
 void MyControllerDeviceDriver::UpdateGripValue( float value )
 {
 	grip_value_.store( value );
+}
+
+void MyControllerDeviceDriver::UpdateFingerCurls( const std::array< float, 5 > &curls )
+{
+	for ( size_t i = 0; i < curls.size(); i++ )
+	{
+		finger_curls_[ i ].store( curls[ i ] );
+	}
+}
+
+void MyControllerDeviceDriver::SetProfile( ControllerProfile profile )
+{
+	profile_ = profile;
 }
