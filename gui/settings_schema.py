@@ -111,13 +111,19 @@ SETTINGS = (
             step=0.05, help="Multiplies how far the hands move."),
     Setting("calibration.rotation_offset_deg.left", "Left hand rotation", "vec3", "Placement",
             minimum=-180, maximum=180, step=1, decimals=0, unit="°",
-            help="How the controller sits in your hand, the same for every camera position."),
+            help="How the controller sits in your hand."),
     Setting("calibration.rotation_offset_deg.right", "Right hand rotation", "vec3", "Placement",
             minimum=-180, maximum=180, step=1, decimals=0, unit="°",
-            help="How the controller sits in your hand, the same for every camera position."),
+            help="How the controller sits in your hand."),
 
     # Depth
-    Setting("tracking.depth_source", "Depth source", "choice", "Depth",
+    Setting("calibration.steady_hand_size", "Steady hand size", "bool", "Depth",
+            help="Keeps each hand the same size over time, so its distance from the camera shakes less. "
+                 "Helps most with a camera behind your hands."),
+    Setting("calibration.hand_size_window", "Hand size memory", "int", "Depth", minimum=10, maximum=600,
+            advanced=True, help="Frames the steady hand size is taken from. More is steadier but adapts "
+                                "slower if tracking misjudges the hand at first."),
+    Setting("tracking.depth_source","Depth source", "choice", "Depth",
             choices=(("mediapipe", "Standard (light)"), ("wilor", "WiLoR 3D model (heavy, experimental)")),
             help="WiLoR gives steadier distance but uses a lot of GPU.", confirm=("wilor", WILOR_WARNING)),
     Setting("tracking.depth_assist.max_rate_hz", "WiLoR max rate", "float", "Depth", minimum=1, maximum=30,

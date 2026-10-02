@@ -7,7 +7,7 @@ The config's normal sections always hold the values in use. "preset" names
 the active preset and "presets" stores the user's presets, plus any built-in
 one the user changed, as {dotted key: value}. Settings that belong to the
 hardware or the whole app (camera device, tracking model, depth source,
-controller rotation, driver connection...) are shared by every preset.
+driver connection...) are shared by every preset.
 """
 import copy
 from typing import Any, Dict, List, Optional
@@ -17,7 +17,8 @@ from utils.config_utils import get_value, set_value
 
 # Built-in presets, as changes to the factory defaults
 BUILTIN_PRESETS: Dict[str, Dict[str, Any]] = {
-    "POV": {"tracking.view_mode": "pov"},
+    # Seen from behind, the hand's apparent size wobbles more, and so does its depth
+    "POV": {"tracking.view_mode": "pov", "calibration.steady_hand_size": True},
     # Tuned live with a webcam facing the user, which shows a mirrored image
     "Facing": {
         "tracking.view_mode": "facing",
@@ -36,10 +37,13 @@ SHARED_KEYS = (
     "camera.hfov_deg", "camera.stall_timeout", "camera.reconnect_timeout",
     "tracking.max_hands", "tracking.detection_confidence", "tracking.tracking_confidence",
     "tracking.model_complexity", "tracking.depth_source", "tracking.depth_assist.",
-    "calibration.rotation_offset_deg.", "network.", "process.", "debug.",
+    "network.", "process.", "debug.",
 )
+# Settings that used to be shared: presets saved before take the value in use
+FORMERLY_SHARED = ("calibration.rotation_offset_deg.left", "calibration.rotation_offset_deg.right")
+FORMAT = 2
 # Top-level entries that are not settings
-META_KEYS = ("preset", "presets")
+META_KEYS = ("preset", "presets", "preset_format")
 
 
 def is_preset_key(key: str) -> bool:
@@ -181,7 +185,11 @@ def migrate(config: Dict[str, Any]) -> None:
     from the factory defaults, plus that mode's placement.
     """
     if "preset" in config:
+        if config.get("preset_format", 1) < FORMAT:
+            _adopt_formerly_shared(config)
+        config["preset_format"] = FORMAT
         return
+    config["preset_format"] = FORMAT
     calibration = config.setdefault("calibration", {})
     sections = {mode: calibration.pop(mode, None) for mode in MODE_PRESETS}
     current_mode = str(get_value(config, "tracking.view_mode") or "pov").lower()
@@ -201,3 +209,18 @@ def migrate(config: Dict[str, Any]) -> None:
         if name in stored(preset):
             stored(config)[name] = stored(preset)[name]
     apply(config, MODE_PRESETS[current_mode])
+
+
+def _adopt_formerly_shared(config: Dict[str, Any]) -> None:
+    """Every preset keeps the value it was using while the setting was shared."""
+    current = snapshot(config)
+    for name in names(config):
+        preset = values(config, name)
+        saved = stored(config).get(name, {})
+        for key in FORMERLY_SHARED:
+            if key not in saved:
+                preset[key] = copy.deepcopy(current[key])
+        if is_builtin(name) and preset == default_values(name):
+            stored(config).pop(name, None)
+        else:
+            stored(config)[name] = preset

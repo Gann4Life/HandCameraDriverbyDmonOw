@@ -10,7 +10,7 @@ from gesture_scores import DEFAULTS as GESTURE_DEFAULTS
 from hand_controls import DEFAULTS as CONTROL_DEFAULTS
 
 # How a Touch controller sits in the hand: rolled from the flat-hand frame
-# toward the thumb, [pitch, yaw, roll] degrees. The same for every camera position.
+# toward the thumb, [pitch, yaw, roll] degrees. Each preset can tune its own.
 DEFAULT_ROTATION_OFFSET_DEG = {"left": [0.0, 0.0, -127.0], "right": [0.0, 0.0, 127.0]}
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -33,6 +33,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "calibration": {
         "scale": 1.0,
         "hand_scale": 1.0,
+        "steady_hand_size": False,
+        "hand_size_window": 90,
         "position_offset": [0.0, 0.0, 0.0],
         "camera_rotation_deg": [0.0, 0.0, 0.0],
         "rotation_offset_deg": copy.deepcopy(DEFAULT_ROTATION_OFFSET_DEG),

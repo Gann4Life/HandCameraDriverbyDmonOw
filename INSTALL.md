@@ -217,11 +217,11 @@ In `app.py`, all of these are in the Settings tab and apply live, so you can adj
 looking at the 3D view and the cm readout. With `Camera.py`, edit `config.json` and restart it.
 
 ### Presets
-Each camera position keeps its own settings in a **preset**: view, mirroring, placement,
-smoothing, gestures and hand identity. Switching preset puts all of them back, so tuning one
+Each camera position keeps its own settings in a **preset**: view, mirroring, placement
+(position offset, camera tilt, hand rotation), smoothing, gestures and hand identity. Switching preset puts all of them back, so tuning one
 position never undoes another. Settings marked *(all presets)* belong to the camera hardware or
-the whole app (camera index, resolution, field of view, tracking model, depth source, controller
-rotation, driver connection) and are the same in every preset.
+the whole app (camera index, resolution, field of view, tracking model, depth source, driver
+connection) and are the same in every preset.
 
 - **POV** and **Facing** are built in. You can change them, and **Restore default** puts them
   back as shipped; they can't be renamed or deleted.
@@ -242,6 +242,7 @@ converted on load.
 | Camera is tilted compared to your head | `camera_rotation_deg`. |
 | Hands are too close or too far | Hold your wrist at a measured distance (e.g. 40 cm) and compare it with the cm the overlay shows. Fix it with `camera.hfov_deg` first, then `calibration.hand_scale`. |
 | Hands feel shaky or laggy | Press `f` to compare the filters, then adjust `calibration.filter`. A lower `min_cutoff` gives more smoothing; a higher `beta` gives less lag on fast moves. |
+| Hands drift toward and away from you | Turn on **Steady hand size** (`calibration.steady_hand_size`, on in the POV preset). It holds each hand at its recent median size, so its distance stops wobbling. |
 
 Don't use `calibrate.py`: it's older than the app and only sets `position_offset` and `scale`;
 the Settings tab covers both, with a live preview.
