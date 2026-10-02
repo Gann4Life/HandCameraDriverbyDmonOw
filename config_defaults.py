@@ -28,7 +28,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "process": {"priority": "above_normal", "disable_power_throttling": True},
     "network": {"host": "127.0.0.1", "port": 65432, "controller_type": "touch",
-                "index_offset": [0.0, 0.0, 0.0], "index_rotation_deg": [0.0, 0.0, 0.0]},
+                # Tuned live in SteamVR Home against the Touch hands
+                "index_offset": [0.0, 0.0, -0.1], "index_rotation_deg": [45.0, 0.0, 0.0]},
     "gestures": {"pinch_threshold": 0.05, "finger_extended_threshold": 0.6,
                  **CONTROL_DEFAULTS, **GESTURE_DEFAULTS},
     "calibration": {
