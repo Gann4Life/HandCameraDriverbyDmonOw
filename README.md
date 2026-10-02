@@ -7,6 +7,9 @@ A complete hand tracking solution using a webcam (especially optimized for PS3 E
 
 Perfect for VR setups like **Cardboard + VRidge/iVRY** where you want hand tracking without expensive controllers!
 
+> **Setting it up? Follow [INSTALL.md](INSTALL.md)**: it's the current step-by-step guide
+> for Windows. Parts of this README are older and out of date.
+
 ## 🌟 Features
 
 - **Real-Time Hand Tracking**: Uses MediaPipe to detect and track 21 hand landmarks per hand
