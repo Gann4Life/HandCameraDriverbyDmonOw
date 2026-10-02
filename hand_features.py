@@ -8,7 +8,7 @@ Everything here is scale-free (angles, or distances divided by palm size), so
 it does not depend on hand size or distance to the camera.
 """
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import Sequence, Tuple
 
 import numpy as np
 
@@ -114,14 +114,3 @@ def compute_features(world_landmarks: Sequence[Sequence[float]], pinch_open: flo
     return HandFeatures(curl=tuple(curls), curl_deg=tuple(curl_degs), splay_deg=splays,
                         pinch=pinches, pinch_distance=distances,
                         index_tip_to_palm=index_to_palm, palm_size_m=palm_size)
-
-
-def legacy_extended(detector, landmarks: List[Tuple[float, float, float]]) -> Tuple[bool, ...]:
-    """
-    What the old gesture detector thinks is extended, per finger, from the
-    normalised image landmarks it uses. Shown next to the curls to see where
-    the two disagree. On a recorded POV clip it said "extended" for every
-    finger in every frame: tip-to-wrist rarely drops below 0.6x MCP-to-wrist,
-    even in a fist, which is why FIST and POINT almost never fired.
-    """
-    return tuple(detector.is_finger_extended(landmarks, finger) for finger in FINGERS)

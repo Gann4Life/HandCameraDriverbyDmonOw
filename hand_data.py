@@ -73,7 +73,7 @@ class TrackedHand:
     camera_position: Tuple[float, float, float]  # filtered wrist, OpenVR camera space (y up, -z forward)
     camera_points: Optional[np.ndarray] = None   # 21 x 3 joints in the same space, or None without a metric fit
     features: Optional["HandFeatures"] = None     # curls, splay, pinch; None without world landmarks
-    legacy_extended: Tuple[bool, ...] = ()        # the old detector's per-finger extended test, for comparison
+    gesture_scores: Dict[str, float] = field(default_factory=dict)  # 0..1 per gesture name
 
 
 @dataclass
