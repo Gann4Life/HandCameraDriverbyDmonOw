@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout
                                QLabel, QLineEdit, QMessageBox, QScrollArea, QSlider, QSpinBox, QVBoxLayout,
                                QWidget)
 
+import presets
 from gui.settings_schema import RESOLUTIONS, SECTIONS, Apply, Setting
 from utils.config_utils import get_value, set_value
 
@@ -144,10 +145,6 @@ class SettingsPanel(QWidget):
             self._add_row(setting)
         self.refresh()
 
-    @property
-    def view_mode(self) -> str:
-        return str(get_value(self.config, "tracking.view_mode", "pov"))
-
     def setting_for(self, key: str) -> Optional[Setting]:
         return next((row.setting for row in self._rows if row.setting.key == key), None)
 
@@ -159,7 +156,7 @@ class SettingsPanel(QWidget):
             row.load(self._current(row.setting))
 
     def refresh(self):
-        """Reload every editor from the config (after a revert or a mode change)."""
+        """Reload every editor from the config (after a revert or a preset change)."""
         for row in self._rows:
             row.load(self._current(row.setting))
         self._update_visibility()
@@ -167,21 +164,27 @@ class SettingsPanel(QWidget):
     def _current(self, setting: Setting) -> Any:
         if setting.kind == "resolution":
             return (get_value(self.config, "camera.width", 640), get_value(self.config, "camera.height", 480))
-        return get_value(self.config, setting.resolve(self.view_mode))
+        return get_value(self.config, setting.key)
 
     def _add_row(self, setting: Setting):
         editor, load, signal = self._make_editor(setting)
         row = _Row(setting, editor, load, lambda: load(self._current(setting)))
         signal.connect(lambda value, r=row: self._edited(r, value))
 
+        notes = [] if setting.apply is Apply.LIVE else [setting.apply.value]
+        shared = not any(presets.is_preset_key(key) for key in setting.config_keys)
+        if shared:
+            notes.append("all presets")
         text = setting.label
-        if setting.apply is not Apply.LIVE:
-            text += f"  <span style='color:gray; font-size:small'>({setting.apply.value})</span>"
+        if notes:
+            text += f"  <span style='color:gray; font-size:small'>({', '.join(notes)})</span>"
         label = QLabel(text)
         label.setTextFormat(Qt.RichText)
-        if setting.help:
-            label.setToolTip(setting.help)
-            editor.setToolTip(setting.help)
+        help_text = setting.help
+        if shared:
+            help_text = f"{help_text}\n\nShared by every preset." if help_text else "Shared by every preset."
+        label.setToolTip(help_text)
+        editor.setToolTip(help_text)
         self._forms[setting.section].addRow(label, editor)
         self._rows.append(row)
 
@@ -247,12 +250,10 @@ class SettingsPanel(QWidget):
             if answer != QMessageBox.Yes:
                 row.revert()
                 return
-        changes = setting.changes(value, self.view_mode)
+        changes = setting.changes(value)
         for key, v in changes.items():
             set_value(self.config, key, v)
         self.changed.emit(changes)
-        if setting.key == "tracking.view_mode":
-            self.refresh()  # placement settings now point at the other mode's section
 
     def _update_visibility(self):
         show_advanced = self.advanced_toggle.isChecked()

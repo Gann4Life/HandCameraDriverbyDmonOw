@@ -8,14 +8,16 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QSplitter, QTabWidget
+from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QSplitter, QTabWidget, QVBoxLayout, QWidget
 
+import presets
 from Camera import HandTracker
 from gui.camera_view import CameraView
 from gui.environments import relaunch, wilor_installed_here, wilor_launcher
 from gui.hand_view_3d import HandView3D
 from gui.live_panel import LivePanel
 from gui.log_panel import LogPanel, capture_output
+from gui.preset_bar import PresetBar
 from gui.settings_panel import SettingsPanel
 from gui.settings_schema import SETTINGS
 from gui.style import MUTED_COLOR, OK_COLOR, WARNING_COLOR
@@ -43,6 +45,14 @@ class MainWindow(QMainWindow):
         self.hand_view = HandView3D()
         self.settings_panel = SettingsPanel(self.config, SETTINGS)
         self.settings_panel.changed.connect(self._on_settings_changed)
+        self.preset_bar = PresetBar(self.config, self.save_config)
+        self.preset_bar.switched.connect(self._on_preset_switched)
+        self.preset_bar.edited.connect(self._update_title)
+        settings_tab = QWidget()
+        settings_layout = QVBoxLayout(settings_tab)
+        settings_layout.setContentsMargins(0, 4, 0, 0)
+        settings_layout.addWidget(self.preset_bar)
+        settings_layout.addWidget(self.settings_panel, 1)
         self.live_panel = LivePanel()
 
         previews = QSplitter(Qt.Vertical)
@@ -50,7 +60,7 @@ class MainWindow(QMainWindow):
         previews.addWidget(self.hand_view)
         previews.setSizes([460, 340])
         tabs = QTabWidget()
-        tabs.addTab(self.settings_panel, "Settings")
+        tabs.addTab(settings_tab, "Settings")
         tabs.addTab(self.live_panel, "Hands")
         tabs.addTab(self.log_panel, "Log")
         main = QSplitter(Qt.Horizontal)
@@ -178,10 +188,18 @@ class MainWindow(QMainWindow):
         if changes.get("tracking.depth_source") == "wilor" and not wilor_installed_here():
             self._switch_to_wilor_environment()
             return
+        self.preset_bar.refresh()
         self._update_title()
         self._sync_depth_action()
         if self.worker is not None:
             self.worker.apply_settings(changes)
+
+    def _on_preset_switched(self, changes: dict):
+        self.settings_panel.refresh()
+        self._update_title()
+        if changes and self.worker is not None:
+            self.worker.apply_settings(changes)
+        self.statusBar().showMessage(f"Preset: {presets.active(self.config)}", 3000)
 
     def _on_settings_applied(self, effective: dict):
         """The tracker may not take a value as asked (e.g. WiLoR not installed)."""
@@ -191,6 +209,7 @@ class MainWindow(QMainWindow):
         for key, value in rejected.items():
             set_value(self.config, key, value)
         self.settings_panel.refresh()
+        self.preset_bar.refresh()
         self._sync_depth_action()
         self._update_title()
         if "tracking.depth_source" in rejected:
@@ -263,9 +282,11 @@ class MainWindow(QMainWindow):
         return self.config != self.saved_config
 
     def _update_title(self):
-        self.setWindowTitle(f"{APP_TITLE}{' *' if self.dirty else ''}")
+        self.setWindowTitle(f"{APP_TITLE} - {presets.active(self.config)}{' *' if self.dirty else ''}")
 
     def save_config(self) -> bool:
+        """Write the config file, keeping the settings in use in the active preset."""
+        presets.store(self.config)
         try:
             with open(self.config_path, "w") as f:
                 json.dump(self.config, f, indent=2)
@@ -274,8 +295,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save", f"Could not save {self.config_path}:\n{e}")
             return False
         self.saved_config = copy.deepcopy(self.config)
+        self.preset_bar.refresh()
         self._update_title()
-        self.statusBar().showMessage(f"Saved {self.config_path}", 3000)
+        self.statusBar().showMessage(f"Saved {self.config_path} (preset {presets.active(self.config)})", 3000)
         return True
 
     def revert_config(self):
@@ -284,6 +306,7 @@ class MainWindow(QMainWindow):
         self.config.clear()
         self.config.update(copy.deepcopy(self.saved_config))
         self.settings_panel.refresh()
+        self.preset_bar.refresh()
         self._update_title()
         if self.worker is not None:
             # Simplest way to apply everything at once: restart with the saved settings

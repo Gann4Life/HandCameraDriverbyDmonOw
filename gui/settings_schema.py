@@ -20,7 +20,7 @@ class Apply(Enum):
 
 @dataclass(frozen=True)
 class Setting:
-    key: str  # dotted config key; "{mode}" stands for the active view mode
+    key: str  # dotted config key
     label: str
     kind: str  # "float", "int", "bool", "choice", "vec3", "text" or "resolution"
     section: str
@@ -36,15 +36,16 @@ class Setting:
     # (value, message): switching to value asks the user to confirm first
     confirm: Optional[Tuple[Any, str]] = None
 
-    def resolve(self, view_mode: str) -> str:
-        return self.key.replace("{mode}", view_mode)
+    @property
+    def config_keys(self) -> Tuple[str, ...]:
+        return ("camera.width", "camera.height") if self.kind == "resolution" else (self.key,)
 
-    def changes(self, value: Any, view_mode: str) -> Dict[str, Any]:
+    def changes(self, value: Any) -> Dict[str, Any]:
         """Config keys and values one edit of this setting writes."""
         if self.kind == "resolution":
             width, height = (int(v) for v in str(value).split("x"))
             return {"camera.width": width, "camera.height": height}
-        return {self.resolve(view_mode): value}
+        return {self.key: value}
 
 
 RESOLUTIONS = ((640, 480), (800, 600), (1280, 720), (1920, 1080))
@@ -88,7 +89,8 @@ SETTINGS = (
     Setting("tracking.view_mode", "Camera position", "choice", "View",
             choices=(("pov", "On my head or chest, looking where I look"),
                      ("facing", "In front of me, looking at me")),
-            help="Each position keeps its own placement settings."),
+            help="How the picture maps to your hands. Part of the preset: for a camera somewhere else, "
+                 "duplicate a preset and change it there."),
     Setting("camera.facing_distance", "Distance to camera", "float", "View", minimum=0.2, maximum=3.0,
             step=0.05, unit=" m", help="Only for a camera in front of you."),
     Setting("tracking.swap_hands", "Swap left and right", "bool", "View",
@@ -98,21 +100,21 @@ SETTINGS = (
             choices=(("mode", "Depends on camera position"), ("away", "Away from the camera"),
                      ("auto", "Detect automatically"))),
 
-    # Placement (per view mode)
-    Setting("calibration.{mode}.position_offset", "Position offset", "vec3", "Placement", minimum=-1.0,
+    # Placement
+    Setting("calibration.position_offset", "Position offset", "vec3", "Placement", minimum=-1.0,
             maximum=1.0, step=0.01, unit=" m", help="Moves both hands: X right, Y up, Z back."),
-    Setting("calibration.{mode}.camera_rotation_deg", "Camera tilt", "vec3", "Placement", minimum=-180,
+    Setting("calibration.camera_rotation_deg", "Camera tilt", "vec3", "Placement", minimum=-180,
             maximum=180, step=1, decimals=0, unit="°", help="Pitch, yaw, roll of the camera relative to your head."),
     Setting("calibration.hand_scale", "Hand size", "float", "Placement", minimum=0.6, maximum=1.4,
             step=0.01, help="1 is an average hand. Raise it if your hands look too close."),
     Setting("calibration.scale", "Movement scale", "float", "Placement", minimum=0.2, maximum=3.0,
             step=0.05, help="Multiplies how far the hands move."),
     Setting("calibration.rotation_offset_deg.left", "Left hand rotation", "vec3", "Placement",
-            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True,
-            help="How the controller sits in your hand. Shared by every camera position."),
+            minimum=-180, maximum=180, step=1, decimals=0, unit="°",
+            help="How the controller sits in your hand, the same for every camera position."),
     Setting("calibration.rotation_offset_deg.right", "Right hand rotation", "vec3", "Placement",
-            minimum=-180, maximum=180, step=1, decimals=0, unit="°", advanced=True,
-            help="How the controller sits in your hand. Shared by every camera position."),
+            minimum=-180, maximum=180, step=1, decimals=0, unit="°",
+            help="How the controller sits in your hand, the same for every camera position."),
 
     # Depth
     Setting("tracking.depth_source", "Depth source", "choice", "Depth",
