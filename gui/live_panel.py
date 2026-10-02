@@ -92,7 +92,7 @@ class _HandReadout(QGroupBox):
             bar.setValue(round(features.pinch[i] * 100))
             bar.setFormat(f"%p%   {features.pinch_distance[i]:.2f} palms")
         self.index_palm.setText(f"{features.index_tip_to_palm:.2f} palms")
-        self.splay.setText("  ".join(f"{v:.0f}°" for v in features.splay_deg))
+        self.splay.setText("  ".join("-" if v != v else f"{v:.0f}°" for v in features.splay_deg))
 
 
 class LivePanel(QScrollArea):

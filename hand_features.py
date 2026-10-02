@@ -37,12 +37,16 @@ FULL_CURL_DEG = {"thumb": 100.0, "index": 210.0, "middle": 210.0, "ring": 205.0,
 PINCH_OPEN = 0.55
 PINCH_CLOSED = 0.20
 
+# Fraction of a proximal bone that must lie in the palm plane for its splay to count
+SPLAY_MIN_IN_PLANE = 0.5
+
 
 @dataclass
 class HandFeatures:
     curl: Tuple[float, ...]       # per finger in FINGERS order, 0 straight .. 1 fully curled
     curl_deg: Tuple[float, ...]   # the raw summed bend behind each curl
-    splay_deg: Tuple[float, ...]  # thumb-index, index-middle, middle-ring, ring-pinky, in the palm plane
+    splay_deg: Tuple[float, ...]  # thumb-index, index-middle, middle-ring, ring-pinky, in the palm plane;
+                                  # NaN when a finger bends too far out of the plane to tell
     pinch: Tuple[float, ...]      # thumb to index/middle/ring/pinky tip, 0 apart .. 1 touching
     pinch_distance: Tuple[float, ...]  # the same distances, in palm sizes
     index_tip_to_palm: float      # in palm sizes; small in a fist, large in a pinch
@@ -56,15 +60,18 @@ def _angle_deg(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.degrees(np.arccos(np.clip(np.dot(a, b) / (na * nb), -1.0, 1.0))))
 
 
-def _ramp(value: float, zero_at: float, one_at: float) -> float:
+def ramp(value: float, zero_at: float, one_at: float) -> float:
     """0 at zero_at, 1 at one_at, linear in between and clamped (either direction)."""
     return float(np.clip((value - zero_at) / (one_at - zero_at), 0.0, 1.0))
 
 
-def compute_features(world_landmarks: Sequence[Sequence[float]]) -> HandFeatures:
+def compute_features(world_landmarks: Sequence[Sequence[float]], pinch_open: float = PINCH_OPEN,
+                     pinch_closed: float = PINCH_CLOSED) -> HandFeatures:
     """
     Args:
         world_landmarks: 21 MediaPipe world landmarks, in metres
+        pinch_open: Thumb-to-fingertip distance, in palm sizes, of no pinch
+        pinch_closed: ... and of a full pinch
 
     Returns:
         The hand's features
@@ -81,20 +88,25 @@ def compute_features(world_landmarks: Sequence[Sequence[float]]) -> HandFeatures
         joints = range(1, len(bones) - 1) if finger == "thumb" else range(len(bones) - 1)
         bend = sum(_angle_deg(bones[j], bones[j + 1]) for j in joints)
         curl_degs.append(bend)
-        curls.append(_ramp(bend, OPEN_CURL_DEG[finger], FULL_CURL_DEG[finger]))
+        curls.append(ramp(bend, OPEN_CURL_DEG[finger], FULL_CURL_DEG[finger]))
 
     # Splay: angle between neighbouring proximal bones, projected onto the palm plane
     normal = np.cross(pts[5] - pts[0], pts[17] - pts[0])
     normal /= np.linalg.norm(normal) or 1.0
 
-    def in_palm(v: np.ndarray) -> np.ndarray:
-        return v - np.dot(v, normal) * normal
+    def in_palm(v: np.ndarray) -> Tuple[np.ndarray, bool]:
+        """v projected onto the palm plane, and whether enough of it lies in the plane to trust."""
+        flat = v - np.dot(v, normal) * normal
+        return flat, np.linalg.norm(flat) >= SPLAY_MIN_IN_PLANE * (np.linalg.norm(v) or 1.0)
 
     proximal = [in_palm(pts[2] - pts[1])] + [in_palm(pts[m + 1] - pts[m]) for m in (5, 9, 13, 17)]
-    splays = tuple(_angle_deg(proximal[i], proximal[i + 1]) for i in range(4))
+    # A finger bent at the knuckle points out of the palm plane; its projection
+    # is short and its direction meaningless, so that splay is unknown (NaN)
+    splays = tuple(_angle_deg(proximal[i][0], proximal[i + 1][0]) if proximal[i][1] and proximal[i + 1][1]
+                   else float("nan") for i in range(4))
 
     distances = tuple(float(np.linalg.norm(pts[tip] - pts[4])) / palm_size for tip in _TIPS.values())
-    pinches = tuple(_ramp(d, PINCH_OPEN, PINCH_CLOSED) for d in distances)
+    pinches = tuple(ramp(d, pinch_open, pinch_closed) for d in distances)
 
     palm_center = pts[list(_PALM)].mean(axis=0)
     index_to_palm = float(np.linalg.norm(pts[8] - palm_center)) / palm_size

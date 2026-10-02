@@ -14,6 +14,7 @@ import numpy as np
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from hand_data import HAND_CONNECTIONS, HandData, TrackedHand, TrackingFrame
 from hand_features import compute_features, legacy_extended
+from hand_controls import DEFAULTS as CONTROL_DEFAULTS, ControlMapper
 from hand_identity import HandDetection, HandIdentityTracker
 from depth_assist import WiLoRDepthAssist
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
@@ -230,6 +231,7 @@ class HandTracker:
             pinch_threshold=float(gesture_config['pinch_threshold']),
             finger_extended_threshold=float(gesture_config['finger_extended_threshold'])
         )
+        self.control_mapper = ControlMapper(gesture_config)
 
     def create_socket_client(self):
         """(Re)create the driver connection; it connects in the background."""
@@ -536,6 +538,12 @@ class HandTracker:
             with open(config_path, 'r') as f:
                 config = json.load(f)
             print(f"Configuration loaded from {config_path}")
+            # Settings added after this file was written start at their defaults
+            gestures = config.setdefault('gestures', {})
+            gestures.setdefault('pinch_threshold', 0.05)
+            gestures.setdefault('finger_extended_threshold', 0.6)
+            for key, value in CONTROL_DEFAULTS.items():
+                gestures.setdefault(key, value)
             return config
         except Exception as e:
             print(f"Error loading config: {e}")
@@ -545,7 +553,7 @@ class HandTracker:
                 "camera": {"device_id": 0, "width": 640, "height": 480, "fps": 30, "flip_horizontal": True, "source_mirrored": False, "backend": "auto", "rotate_180": False},
                 "tracking": {"max_hands": 2, "detection_confidence": 0.7, "tracking_confidence": 0.5, "model_complexity": 1, "view_mode": "facing", "swap_hands": False},
                 "network": {"host": "127.0.0.1", "port": 65432},
-                "gestures": {"pinch_threshold": 0.05, "finger_extended_threshold": 0.6},
+                "gestures": {"pinch_threshold": 0.05, "finger_extended_threshold": 0.6, **CONTROL_DEFAULTS},
                 "calibration": {"position_offset": [0.0, 0.0, 0.0], "scale": 1.0},
                 "debug": {"show_video": True, "show_landmarks": True, "show_fps": True, "log_gestures": False}
             }
@@ -643,9 +651,17 @@ class HandTracker:
         # Detect gesture
         gesture = self.gesture_detector.detect_gesture(landmarks)
 
-        # Calculate trigger and grip values
-        trigger_value = self.gesture_detector.get_trigger_value(gesture)
-        grip_value = self.gesture_detector.get_grip_value(gesture)
+        # Trigger and grip: analog, from finger curl and pinch. Without world
+        # landmarks there are no features, so the old gesture table stays as a fallback.
+        gesture_config = self.config['gestures']
+        features = None
+        if world is not None:
+            features = compute_features(world, float(gesture_config['pinch_open']),
+                                        float(gesture_config['pinch_closed']))
+            trigger_value, grip_value = self.control_mapper(hand_type, features, now)
+        else:
+            trigger_value = self.gesture_detector.get_trigger_value(gesture)
+            grip_value = self.gesture_detector.get_grip_value(gesture)
 
         hand_data = HandData(
             hand_type=hand_type,
@@ -657,7 +673,6 @@ class HandTracker:
             landmarks=landmarks,
             is_detected=True
         )
-        features = compute_features(world) if world is not None else None
         return TrackedHand(data=hand_data, camera_position=camera_position, camera_points=camera_points,
                            features=features, legacy_extended=legacy_extended(self.gesture_detector, landmarks))
 
