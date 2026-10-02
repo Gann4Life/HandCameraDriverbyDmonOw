@@ -2,6 +2,7 @@
 Socket client for communication with SteamVR driver.
 """
 import socket
+import threading
 import time
 from typing import Optional
 
@@ -27,7 +28,8 @@ class SocketClient:
         self.socket: Optional[socket.socket] = None
         self.connected = False
         self.last_reconnect_attempt = 0.0
-        
+        self._connect_thread: Optional[threading.Thread] = None
+
     def connect(self) -> bool:
         """
         Connect to the server.
@@ -66,8 +68,12 @@ class SocketClient:
                 current_time = time.time()
                 if current_time - self.last_reconnect_attempt >= self.reconnect_interval:
                     self.last_reconnect_attempt = current_time
-                    print("Attempting to reconnect...")
-                    self.connect()
+                    # On Windows a refused connect to localhost blocks ~2 s, so retry
+                    # off the tracking loop instead of freezing it
+                    if not (self._connect_thread and self._connect_thread.is_alive()):
+                        print("Attempting to reconnect...")
+                        self._connect_thread = threading.Thread(target=self.connect, daemon=True)
+                        self._connect_thread.start()
             
             if not self.connected:
                 return False
