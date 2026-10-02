@@ -36,6 +36,7 @@ class WiLoRDepthAssist:
         self.estimate_wrist = estimate_wrist
         self.min_interval = 1.0 / max(0.5, max_rate_hz)
         self.available = False
+        self.loading = False
         self.error: Optional[str] = None
         self.rate_hz = 0.0
         self._pipe = None
@@ -49,35 +50,57 @@ class WiLoRDepthAssist:
 
     def start(self) -> bool:
         """
-        Load WiLoR (on the GPU, fp16) and start the worker.
+        Start the worker. Loading WiLoR (on the GPU, fp16) takes up to ~40 s,
+        so it happens on the worker thread: `loading` is True meanwhile, and
+        if it fails `error` says why and `failed` turns True.
 
         Returns:
-            True if WiLoR is running; otherwise self.error says why
+            False only if WiLoR is not installed in this environment
         """
         if self._running:
             return True
-        try:
-            import warnings
-            import torch
-            from wilor_mini.pipelines.wilor_hand_pose3d_estimation_pipeline import WiLorHandPose3dEstimationPipeline
-            warnings.filterwarnings("ignore", category=FutureWarning)
-            if not torch.cuda.is_available():
-                self.error = "CUDA is not available"
-                return False
-            self._torch = torch
-            self._pipe = WiLorHandPose3dEstimationPipeline(device=torch.device("cuda"), dtype=torch.float16,
-                                                           verbose=False)
-        except ImportError as e:
-            self.error = f"WiLoR is not installed in this environment ({e}); run from .venv-wilor"
+        import importlib.util
+        missing = [m for m in ("torch", "wilor_mini") if importlib.util.find_spec(m) is None]
+        if missing:
+            self.error = f"WiLoR is not installed in this environment (no {', '.join(missing)}); run from .venv-wilor"
             return False
-        except Exception as e:  # model download / load failures
-            self.error = f"WiLoR failed to load: {e}"
-            return False
-        self.available = True
+        self.error = None
+        self.loading = self._pipe is None
         self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         return True
+
+    @property
+    def failed(self) -> bool:
+        return self.error is not None and not self.available
+
+    def _load(self):
+        import warnings
+        import torch
+        from wilor_mini.pipelines.wilor_hand_pose3d_estimation_pipeline import WiLorHandPose3dEstimationPipeline
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is not available")
+        self._torch = torch
+        self._pipe = WiLorHandPose3dEstimationPipeline(device=torch.device("cuda"), dtype=torch.float16,
+                                                       verbose=False)
+
+    def _run(self):
+        if self._pipe is None:
+            try:
+                self._load()
+            except Exception as e:  # missing CUDA, model download or load failures
+                self.error = f"WiLoR failed to load: {e}"
+                self._running = False
+                return
+            finally:
+                self.loading = False
+            print("WiLoR depth ready")
+        if not self._running:  # stopped while loading; the model stays loaded for the next start
+            return
+        self.available = True
+        self._loop()
 
     def stop(self):
         self._running = False

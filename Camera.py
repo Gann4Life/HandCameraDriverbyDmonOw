@@ -80,6 +80,9 @@ class HandTracker:
         self._last_slow_report = 0.0
         self.last_timings = (0.0, 0.0, 0.0)
         self.last_camera_position = {}
+        # Config values the tracker changed on its own (e.g. WiLoR failing to
+        # load), for a GUI to pick up and clear
+        self.changed_by_tracker: Dict[str, Any] = {}
         # Whether step()'s caller shows an OpenCV window that needs pumping
         self.cv_preview = False
         self.camera = None
@@ -406,7 +409,7 @@ class HandTracker:
         """
         if source == 'wilor':
             if self.depth_assist is None:
-                print("Loading WiLoR for depth (first run downloads the models)...")
+                print("Loading WiLoR for depth in the background (first run downloads the models)...")
                 self.depth_assist = WiLoRDepthAssist(self.estimate_wrist_position,
                                                      float(self.depth_assist_config.get('max_rate_hz', 10.0)))
             if not self.depth_assist.start():
@@ -420,6 +423,8 @@ class HandTracker:
     def depth_label(self) -> str:
         if self.depth_source != 'wilor':
             return "MediaPipe"
+        if self.depth_assist.loading:
+            return "WiLoR loading..."
         label = f"WiLoR {self.depth_assist.rate_hz:.0f} Hz"
         torch = getattr(self.depth_assist, '_torch', None)
         if torch is not None:
@@ -759,7 +764,13 @@ class HandTracker:
         results = self.hands.process(frame_rgb)
         t_tracked = time.perf_counter()
         if self.depth_source == 'wilor':
-            self.depth_assist.submit(frame_rgb, t_frame)
+            if self.depth_assist.failed:
+                # It loads in the background, so a failure only shows up now
+                print(f"{self.depth_assist.error}. Back to MediaPipe depth.")
+                self.set_depth_source('mediapipe')
+                self.changed_by_tracker['tracking.depth_source'] = 'mediapipe'
+            else:
+                self.depth_assist.submit(frame_rgb, t_frame)
 
         tracked = []
         if results.multi_hand_landmarks and results.multi_handedness:

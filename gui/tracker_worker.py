@@ -64,6 +64,9 @@ class TrackerWorker(QThread):
             while self._running:
                 self._apply_pending(tracker)
                 frame = tracker.step()
+                if tracker.changed_by_tracker:
+                    self.settings_applied.emit(tracker.changed_by_tracker)
+                    tracker.changed_by_tracker = {}
                 if frame is None:
                     continue
                 with self._lock:
