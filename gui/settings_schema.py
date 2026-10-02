@@ -88,10 +88,11 @@ SETTINGS = (
 
     # View
     Setting("tracking.view_mode", "Camera position", "choice", "View",
-            choices=(("pov", "On my head or chest, looking where I look"),
-                     ("facing", "In front of me, looking at me")),
+            choices=(("facing", "In front of me, looking at me"),
+                     ("pov", "On my head or chest, looking where I look (experimental)")),
             help="How the picture maps to your hands. Part of the preset: for a camera somewhere else, "
-                 "duplicate a preset and change it there."),
+                 "duplicate a preset and change it there. On your head or chest, the camera sees the backs "
+                 "of your hands, and they can twist or jitter: in front of you works best for now."),
     Setting("camera.facing_distance", "Distance to camera", "float", "View", minimum=0.2, maximum=3.0,
             step=0.05, unit=" m", help="Only for a camera in front of you."),
     Setting("tracking.swap_hands", "Swap left and right", "bool", "View",

@@ -32,9 +32,9 @@ tracking also show each finger. Switching takes effect the next time SteamVR sta
     latency than Wi-Fi.
   - Any USB webcam.
 - **A spot for the camera.** There are two modes:
-  - **POV** (the default): the camera is on your head or chest and looks where you
-    look, so it sees the backs of your hands.
-  - **Facing**: the camera is in front of you, looking at you.
+  - **Facing** (the default, recommended): the camera is in front of you, looking at you.
+  - **POV** (experimental): the camera is on your head or chest and looks where you
+    look, so it sees the backs of your hands. Hands can twist or jitter in this mode for now.
 
 ### Software to install
 | Software | Why | Where |
@@ -175,11 +175,12 @@ ALVR's own hand tracking and controller emulation
    - `width`, `height`, `fps`: `640`, `480`, `30` is a safe start.
    - `hfov_deg`: the camera's horizontal field of view in degrees. It's used to turn the
      image into real distances. Phone main cameras are about 65–75°; the default is 70.
-   - `source_mirrored`: set it to `true` only if your camera app already mirrors the
-     image like a selfie. Iriun doesn't by default, so leave it at `false`.
+   - `source_mirrored`: whether the picture already arrives mirrored like a selfie. The Facing
+     preset turns it on, which is what the reference setup needs; if your hands move the
+     wrong way left and right, switch it.
    - `rotate_180`: set it to `true` if the camera is mounted upside down.
 3. Pick the preset for your camera position (see section 1): in the app, **Preset** at the top
-   of the Settings tab; in `config.json`, `"preset": "POV"` or `"preset": "Facing"`.
+   of the Settings tab; in `config.json`, `"preset": "Facing"` (the default) or `"preset": "POV"`.
 
 ---
 
@@ -248,7 +249,7 @@ tab has the ones that belong to the camera hardware or the whole app (camera ind
 field of view, tracking model, depth source, driver connection): they are the same in every
 preset and save themselves.
 
-- **POV** and **Facing** are built in. You can change them, and **Restore default** puts them
+- **Facing** (the default) and **POV** (experimental) are built in. You can change them, and **Restore default** puts them
   back as shipped; they can't be renamed or deleted.
 - **Duplicate...** makes a new preset from the settings in use, e.g. for a second camera
   position. Your own presets can be renamed and deleted.
@@ -263,7 +264,7 @@ converted on load.
 ### What to change
 | Problem in VR | What to change |
 |---|---|
-| Hands are rotated compared to your real hands | `rotation_offset_deg.left` / `.right`, in degrees `[x, y, z]`. A POV camera usually needs a z value: the reference setup uses `-127` for the left hand and `127` for the right. Adjust in steps of 10–20°. |
+| Hands are rotated compared to your real hands | `rotation_offset_deg.left` / `.right`, in degrees `[x, y, z]`. The built-in presets come tuned on the reference setup: Facing uses `[0, 0, -90]` for the left hand and `[0, 0, 90]` for the right; POV uses `[0, 35, -115]` and `[0, -35, 115]`. Adjust in steps of 10–20°. |
 | Hands are shifted (too high, too far…) | `position_offset`, in metres `[x, y, z]`. |
 | Camera is tilted compared to your head | `camera_rotation_deg`. |
 | Hands are too close or too far | Hold your wrist at a measured distance (e.g. 40 cm) and compare it with the cm the overlay shows. Fix it with `camera.hfov_deg` first, then `calibration.hand_scale`. |
