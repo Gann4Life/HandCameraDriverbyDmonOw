@@ -1,0 +1,19 @@
+# Experimental WiLoR (3D hand mesh) backend. Install into a separate venv:
+#   py -3.10 -m venv .venv-wilor
+#   .venv-wilor\Scripts\python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   .venv-wilor\Scripts\python -m pip install "numpy<2" setuptools wheel
+#   # chumpy's setup.py imports pip, which fails inside pip's isolated build env
+#   .venv-wilor\Scripts\python -m pip install --no-build-isolation "chumpy @ git+https://github.com/mattloper/chumpy"
+#   # wilor-mini depends on chumpy by git URL, which pip always rebuilds, so the
+#   # whole install needs --no-build-isolation too
+#   .venv-wilor\Scripts\python -m pip install --no-build-isolation -r requirements.txt -r requirements-wilor.txt "numpy<2"
+#
+# LICENSING: research / non-commercial only. WiLoR code is CC BY-NC-ND, the MANO
+# hand model is non-commercial and non-redistributable, the YOLO detector
+# (ultralytics) is AGPL-3.0. Do not ship or distribute builds that include this
+# backend without legal review.
+
+# WiLoR-mini, pinned (it pulls smplx, timm, einops, ultralytics, roma, chumpy)
+# The YOLO detector checkpoint is pickled with dill, which ultralytics does not declare
+dill
+wilor-mini @ git+https://github.com/warmshao/WiLoR-mini@ebec42f94c389070cdd7dda6fd1bf0b4a659c960

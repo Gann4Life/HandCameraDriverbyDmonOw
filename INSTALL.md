@@ -187,6 +187,7 @@ The tracker keeps running at full speed in the background, even when the game ha
 | `q` | Quit |
 | `s` | Swap left/right **now**, if the tracker gets the hands the wrong way round |
 | `f` | Cycle smoothing: One Euro → EMA → none |
+| `b` | Toggle WiLoR depth (experimental, see section 10) |
 
 ### Is it working?
 - **Preview:** you should see the skeleton drawn on each hand, plus `LEFT: ... NN cm` /
@@ -231,14 +232,32 @@ the tracker no longer reads.
 
 ## 10. Optional: WiLoR depth (experimental)
 
-There's an experimental mode that uses a 3D hand-mesh model (WiLoR) to get much steadier
-distance from the camera, at the cost of about 200 ms of extra depth lag. It needs an
-NVIDIA GPU, and it's **personal, non-commercial use only** because of the licenses of the
-models it uses.
+This mode uses a 3D hand-mesh model to get much steadier distance from the camera, at the
+cost of about 200 ms of extra depth lag.
 
-It isn't on `main`. It lives on the `experiment/3d-hand-mesh` branch, and that branch's
-`INSTALL.md` explains how to set it up:
+What it needs:
+- An NVIDIA GPU with about 1.5 GB of free VRAM.
+- About 5 GB of disk space.
+- Python 3.10.
+
+> **⚠️ License: personal, non-commercial use only.** WiLoR is CC BY-NC-ND, the MANO hand
+> model is non-commercial and non-redistributable, and the YOLO detector (Ultralytics) is
+> AGPL-3.0. Don't redistribute it or use it commercially without legal review.
+
+Install it into a **separate** environment, so the normal `.venv` stays as it is:
 
 ```powershell
-git switch experiment/3d-hand-mesh
+py -3.10 -m venv .venv-wilor
+.venv-wilor\Scripts\python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+.venv-wilor\Scripts\python -m pip install "numpy<2" setuptools wheel
+.venv-wilor\Scripts\python -m pip install --no-build-isolation "chumpy @ git+https://github.com/mattloper/chumpy"
+.venv-wilor\Scripts\python -m pip install --no-build-isolation -r requirements.txt -r requirements-wilor.txt "numpy<2"
 ```
+
+Then run `.venv-wilor\Scripts\python Camera.py` and press `b`. The models download the first
+time, which takes a while. After that, loading takes about 10 s. When it's on, the overlay
+shows `Depth [b]: WiLoR N Hz`.
+
+To calibrate it: hold your wrist 40 cm from the camera and adjust
+`tracking.depth_assist.scale` until the overlay reads `40 cm`. If the game starts dropping
+frames, lower `tracking.depth_assist.max_rate_hz`.

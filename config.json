@@ -21,6 +21,13 @@
     "view_mode": "pov",
     "palm_facing": "mode",
     "swap_hands": false,
+    "depth_source": "mediapipe",
+    "depth_assist": {
+      "max_rate_hz": 10.0,
+      "max_age": 0.5,
+      "match_radius": 0.12,
+      "scale": 1.0
+    },
     "identity": {
       "continuity_radius": 0.15,
       "memory_seconds": 0.4,

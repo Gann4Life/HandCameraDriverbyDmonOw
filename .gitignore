@@ -26,7 +26,11 @@ htmlcov/
 *.cover
 .hypothesis/
 .venv
+.venv-wilor/
 venv/
+# Benchmark recordings (may contain the user's surroundings)
+tools/bench_clip*.mp4
+tools/bench_results*.json
 ENV/
 env/
 

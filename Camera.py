@@ -13,6 +13,7 @@ import numpy as np
 from typing import List, Tuple, Optional
 from hand_data import HandData
 from hand_identity import HandDetection, HandIdentityTracker
+from depth_assist import WiLoRDepthAssist
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
 from utils.one_euro import (OneEuroFilter, QuaternionOneEuroFilter, ExponentialFilter,
                             QuaternionExponentialFilter, PassThroughFilter)
@@ -163,6 +164,17 @@ class HandTracker:
         mode = str(self.filter_config.get('mode', 'one_euro')).lower()
         self.filter_mode = mode if mode in FILTER_MODES else 'one_euro'
         self.build_filters()
+
+        # Depth source; 'b' in the preview toggles it. WiLoR is experimental,
+        # needs .venv-wilor and is research/non-commercial only.
+        self.depth_assist_config = tracking_config.get('depth_assist', {})
+        self.depth_assist_max_age = float(self.depth_assist_config.get('max_age', 0.5))
+        self.depth_assist_match_radius = float(self.depth_assist_config.get('match_radius', 0.12))
+        self.depth_assist_scale = float(self.depth_assist_config.get('scale', 1.0))
+        self.depth_assist = None
+        self.depth_source = 'mediapipe'
+        if str(tracking_config.get('depth_source', 'mediapipe')).lower() == 'wilor':
+            self.set_depth_source('wilor')
         # Metric position: horizontal field of view of the camera, and how the
         # user's hand compares to MediaPipe's average-sized hand model
         self.hfov_deg = float(cam_config.get('hfov_deg', 70.0))
@@ -254,6 +266,47 @@ class HandTracker:
         position = (x, y, z)
         self.last_camera_position[hand_type] = position
         return position
+
+    def set_depth_source(self, source: str):
+        """
+        Switch where per-hand depth comes from: "mediapipe" (solvePnP on its
+        landmarks) or "wilor" (asynchronous WiLoR mesh, experimental).
+        Falls back to MediaPipe if WiLoR cannot be loaded.
+        """
+        if source == 'wilor':
+            if self.depth_assist is None:
+                print("Loading WiLoR for depth (first run downloads the models)...")
+                self.depth_assist = WiLoRDepthAssist(self.estimate_wrist_position,
+                                                     float(self.depth_assist_config.get('max_rate_hz', 10.0)))
+            if not self.depth_assist.start():
+                print(f"WiLoR depth unavailable: {self.depth_assist.error}. Staying on MediaPipe.")
+                source = 'mediapipe'
+        self.depth_source = source
+        self.build_filters()  # depth history from the other source no longer applies
+        print(f"Depth: {source}")
+
+    def apply_assisted_depth(self, wrist: Tuple[float, float], position: Tuple[float, float, float],
+                             now: float) -> Tuple[float, float, float]:
+        """
+        Replace the distance of a MediaPipe camera-space position with WiLoR's,
+        keeping it on MediaPipe's current line of sight: the hand stays where
+        MediaPipe sees it in the image, only how far along that ray changes.
+        WiLoR's result comes from an older frame, so it is matched to this hand
+        by image position and dropped once too old.
+        """
+        results_time, results = self.depth_assist.latest()
+        if not results or now - results_time > self.depth_assist_max_age:
+            return position
+        nearest = min(results, key=lambda r: math.hypot(r[0] - wrist[0], r[1] - wrist[1]))
+        if math.hypot(nearest[0] - wrist[0], nearest[1] - wrist[1]) > self.depth_assist_match_radius:
+            return position
+        mediapipe_distance = -position[2]
+        if mediapipe_distance <= 1e-3:
+            return position
+        # WiLoR's hand model is not sized like MediaPipe's, so its distances
+        # get their own calibration factor
+        scale = nearest[2] * self.depth_assist_scale / mediapipe_distance
+        return (position[0] * scale, position[1] * scale, position[2] * scale)
 
     def build_filters(self):
         """(Re)create the per-hand filters for the current filter_mode."""
@@ -407,6 +460,8 @@ class HandTracker:
         if camera_position is None:
             camera_position = self.estimate_wrist_position_fallback(landmarks)
         now = time.perf_counter()
+        if self.depth_source == 'wilor':
+            camera_position = self.apply_assisted_depth(landmarks[0][:2], camera_position, now)
         camera_position = self.smooth_camera_position(hand_type, camera_position, now)
 
         # Apply calibration: scale in camera space, tilt into HMD space, then offset
@@ -507,6 +562,10 @@ class HandTracker:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(frame, f"Filter [f]: {FILTER_LABELS[self.filter_mode]}", (10, frame.shape[0] - 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+        depth_label = (f"WiLoR {self.depth_assist.rate_hz:.0f} Hz" if self.depth_source == 'wilor'
+                       else "MediaPipe")
+        cv2.putText(frame, f"Depth [b]: {depth_label}", (10, frame.shape[0] - 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
         
         # Draw hand information
         y_offset = 60
@@ -533,7 +592,7 @@ class HandTracker:
             print("Warning: Could not connect to driver. Will keep trying...")
         
         print("\nHand tracking active!")
-        print("Press 'q' to quit, 's' to swap left/right, 'f' to cycle smoothing\n")
+        print("Press 'q' to quit, 's' to swap left/right, 'f' to cycle smoothing, 'b' to toggle WiLoR depth\n")
         
         try:
             while True:
@@ -557,6 +616,8 @@ class HandTracker:
                 # Process with MediaPipe
                 results = self.hands.process(frame_rgb)
                 t_tracked = time.perf_counter()
+                if self.depth_source == 'wilor':
+                    self.depth_assist.submit(frame_rgb, t_frame)
 
                 # Prepare hand data
                 hands_data = []
@@ -621,6 +682,8 @@ class HandTracker:
                         print("Hands swapped")
                     if key == ord('f'):
                         self.cycle_filter_mode()
+                    if key == ord('b'):
+                        self.set_depth_source('mediapipe' if self.depth_source == 'wilor' else 'wilor')
 
                 self.report_slow_frame(t_frame, t_tracked, t_sent, time.perf_counter())
 
@@ -633,6 +696,8 @@ class HandTracker:
         finally:
             # Cleanup
             print("\nCleaning up...")
+            if self.depth_assist is not None:
+                self.depth_assist.stop()
             self.camera.release()
             self.socket_client.close()
             self.hands.close()
