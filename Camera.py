@@ -13,6 +13,7 @@ import time
 import numpy as np
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from hand_data import HAND_CONNECTIONS, HandData, TrackedHand, TrackingFrame
+from hand_features import compute_features, legacy_extended
 from hand_identity import HandDetection, HandIdentityTracker
 from depth_assist import WiLoRDepthAssist
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
@@ -656,7 +657,9 @@ class HandTracker:
             landmarks=landmarks,
             is_detected=True
         )
-        return TrackedHand(data=hand_data, camera_position=camera_position, camera_points=camera_points)
+        features = compute_features(world) if world is not None else None
+        return TrackedHand(data=hand_data, camera_position=camera_position, camera_points=camera_points,
+                           features=features, legacy_extended=legacy_extended(self.gesture_detector, landmarks))
 
     def calculate_palm_size(self, landmarks: List[Tuple[float, float, float]]) -> float:
         """
