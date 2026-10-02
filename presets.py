@@ -18,7 +18,13 @@ from utils.config_utils import get_value, set_value
 # Built-in presets, as changes to the factory defaults
 BUILTIN_PRESETS: Dict[str, Dict[str, Any]] = {
     "POV": {"tracking.view_mode": "pov"},
-    "Facing": {"tracking.view_mode": "facing"},
+    # Tuned live with a webcam facing the user, which shows a mirrored image
+    "Facing": {
+        "tracking.view_mode": "facing",
+        "camera.source_mirrored": True,
+        "calibration.filter.position.beta": 1.41,
+        "calibration.position_offset": [0.0, 0.0, -0.2],
+    },
 }
 # The built-in preset for each view mode, for older configs and --mode
 MODE_PRESETS = {"pov": "POV", "facing": "Facing"}
@@ -171,7 +177,8 @@ def migrate(config: Dict[str, Any]) -> None:
     """
     Older configs kept placement per view mode (calibration.pov,
     calibration.facing) and everything else shared. Each mode becomes its
-    built-in preset, with the shared values and that mode's placement.
+    built-in preset: its own defaults, plus the shared values the user changed
+    from the factory defaults, plus that mode's placement.
     """
     if "preset" in config:
         return
@@ -180,11 +187,16 @@ def migrate(config: Dict[str, Any]) -> None:
     current_mode = str(get_value(config, "tracking.view_mode") or "pov").lower()
     if current_mode not in MODE_PRESETS:
         current_mode = "pov"
+    factory = snapshot(DEFAULT_CONFIG)
+    changed = {key: value for key, value in snapshot(config).items() if factory.get(key) != value}
+    changed.pop("tracking.view_mode", None)
     for mode, name in MODE_PRESETS.items():
         preset = copy.deepcopy(config)
-        set_value(preset, "tracking.view_mode", mode)
+        for key, value in {**default_values(name), **changed}.items():
+            set_value(preset, key, copy.deepcopy(value))
         for key, value in (sections[mode] or {}).items():
-            set_value(preset, f"calibration.{key}", copy.deepcopy(value))
+            if factory.get(f"calibration.{key}") != value:
+                set_value(preset, f"calibration.{key}", copy.deepcopy(value))
         store(preset, name)
         if name in stored(preset):
             stored(config)[name] = stored(preset)[name]
