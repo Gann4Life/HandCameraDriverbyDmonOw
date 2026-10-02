@@ -72,6 +72,9 @@ vrserver.txt
 # Personal task list
 TODO.md
 
+# Local Claude Code settings and skills
+.claude/
+
 # Temporary files
 *.tmp
 *.temp
