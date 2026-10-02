@@ -111,10 +111,10 @@ SETTINGS = (
             step=0.05, help="Multiplies how far the hands move."),
     Setting("calibration.rotation_offset_deg.left", "Left hand rotation", "vec3", "Placement",
             minimum=-180, maximum=180, step=1, decimals=0, unit="°",
-            help="How the controller sits in your hand, the same for every camera position."),
+            help="How the controller sits in your hand."),
     Setting("calibration.rotation_offset_deg.right", "Right hand rotation", "vec3", "Placement",
             minimum=-180, maximum=180, step=1, decimals=0, unit="°",
-            help="How the controller sits in your hand, the same for every camera position."),
+            help="How the controller sits in your hand."),
 
     # Depth
     Setting("calibration.steady_hand_size", "Steady hand size", "bool", "Depth",
