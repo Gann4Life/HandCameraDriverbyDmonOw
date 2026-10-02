@@ -168,7 +168,18 @@ ALVR's own hand tracking and controller emulation
 The order doesn't matter. `Camera.py` keeps retrying until the driver shows up.
 
 1. Start SteamVR (with the headset connected).
-2. Start the tracker:
+2. Start the tracker app:
+   ```powershell
+   .venv\Scripts\python app.py
+   ```
+   It shows the camera with the hand skeletons, a 3D view of where each hand is placed, a live
+   readout of what each hand sends, and all the settings. Most settings apply instantly while you
+   watch the preview; the few that need more say so next to their name (for example "reopens the
+   camera"). **Save** (Ctrl+S) writes them to `config.json`; **Revert** goes back to the last save.
+   Hover over a setting's name for a short explanation.
+
+   The command-line version still works, with an OpenCV preview window and keys instead of a
+   settings panel:
    ```powershell
    .venv\Scripts\python Camera.py
    ```
@@ -200,8 +211,10 @@ The tracker keeps running at full speed in the background, even when the game ha
 
 ## 8. Calibrate
 
-All values are in `config.json`. Restart `Camera.py` after you change them. POV and Facing
-have **separate** calibration values, under `calibration.pov` and `calibration.facing`.
+In `app.py`, all of these are in the Settings tab and apply live, so you can adjust them while
+looking at the 3D view and the cm readout. With `Camera.py`, edit `config.json` and restart it.
+POV and Facing have **separate** calibration values, under `calibration.pov` and
+`calibration.facing` (in the app: the Placement section follows the current camera position).
 
 | Problem in VR | What to change |
 |---|---|
@@ -254,7 +267,9 @@ py -3.10 -m venv .venv-wilor
 .venv-wilor\Scripts\python -m pip install --no-build-isolation -r requirements.txt -r requirements-wilor.txt "numpy<2"
 ```
 
-Then run `.venv-wilor\Scripts\python Camera.py` and press `b`. The models download the first
+Then run `.venv-wilor\Scripts\python app.py` and turn on **WiLoR depth** in the toolbar (it
+asks for confirmation and lists the costs first), or run `.venv-wilor\Scripts\python Camera.py`
+and press `b`. While it is on, the status bar shows its rate and GPU memory. The models download the first
 time, which takes a while. After that, loading takes about 10 s. When it's on, the overlay
 shows `Depth [b]: WiLoR N Hz`.
 

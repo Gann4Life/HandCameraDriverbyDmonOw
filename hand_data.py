@@ -1,8 +1,19 @@
 """
 Data class for hand tracking information.
 """
-from typing import Tuple, List, Optional
-from dataclasses import dataclass
+from typing import Dict, Tuple, List, Optional
+from dataclasses import dataclass, field
+
+import numpy as np
+
+# Landmark index pairs that form the hand skeleton (MediaPipe's HAND_CONNECTIONS)
+HAND_CONNECTIONS = (
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (5, 9), (9, 10), (10, 11), (11, 12),
+    (9, 13), (13, 14), (14, 15), (15, 16),
+    (13, 17), (0, 17), (17, 18), (18, 19), (19, 20),
+)
 
 
 @dataclass
@@ -50,3 +61,27 @@ class HandData:
             landmarks=[],
             is_detected=False
         )
+
+
+@dataclass
+class TrackedHand:
+    """One hand in a TrackingFrame, with what the previews need to draw it."""
+
+    data: HandData
+    camera_position: Tuple[float, float, float]  # filtered wrist, OpenVR camera space (y up, -z forward)
+    camera_points: Optional[np.ndarray] = None   # 21 x 3 joints in the same space, or None without a metric fit
+
+
+@dataclass
+class TrackingFrame:
+    """Everything one tracking step produced, as an immutable snapshot for display."""
+
+    frame_rgb: np.ndarray
+    frame_bgr: np.ndarray
+    hands: List[TrackedHand]
+    timings_ms: Dict[str, float] = field(default_factory=dict)
+    tracking_fps: float = 0.0
+    camera_fps: float = 0.0
+    driver_connected: bool = False
+    depth_label: str = "MediaPipe"
+    hfov_deg: float = 70.0

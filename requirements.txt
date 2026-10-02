@@ -2,3 +2,7 @@ opencv-python>=4.8.1.78,<5
 # Newer MediaPipe releases drop the mp.solutions API Camera.py uses
 mediapipe==0.10.21
 numpy>=1.21.0,<2
+# Desktop interface (app.py): Qt 6 (LGPL) and the 3D view
+PySide6-Essentials>=6.8,<7
+pyqtgraph>=0.13.7
+PyOpenGL>=3.1.7
