@@ -69,6 +69,9 @@ out/
 *.log
 vrserver.txt
 
+# Personal task list
+TODO.md
+
 # Temporary files
 *.tmp
 *.temp

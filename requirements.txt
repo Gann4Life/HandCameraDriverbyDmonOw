@@ -1,3 +1,4 @@
 opencv-python>=4.8.1.78,<5
-mediapipe>=0.10.0,<1
+# Newer MediaPipe releases drop the mp.solutions API Camera.py uses
+mediapipe==0.10.21
 numpy>=1.21.0,<2
