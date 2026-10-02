@@ -14,8 +14,10 @@ import numpy as np
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from hand_data import HAND_CONNECTIONS, HandData, TrackedHand, TrackingFrame
 from hand_features import compute_features
-from hand_controls import DEFAULTS as CONTROL_DEFAULTS, ControlMapper
-from gesture_scores import DEFAULTS as GESTURE_DEFAULTS, GestureClassifier, score_gestures
+from hand_controls import ControlMapper
+from gesture_scores import GestureClassifier, score_gestures
+from config_defaults import DEFAULT_CONFIG, DEFAULT_ROTATION_OFFSET_DEG, fill_defaults
+import presets
 from hand_identity import HandDetection, HandIdentityTracker
 from depth_assist import WiLoRDepthAssist
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
@@ -30,10 +32,6 @@ from utils.socket_client import SocketClient
 # "facing": camera in front of the user, looking back at them (selfie view).
 # "pov":    camera looks the same way the user does (head/chest mounted).
 VIEW_MODES = ("facing", "pov")
-
-# How a Touch controller sits in the hand: rolled from the flat-hand frame
-# toward the thumb, [pitch, yaw, roll] degrees. The same for every camera position.
-DEFAULT_ROTATION_OFFSET_DEG = {"left": [0.0, 0.0, -127.0], "right": [0.0, 0.0, 127.0]}
 
 # Smoothing modes the 'f' key cycles through
 FILTER_MODES = ("one_euro", "ema", "none")
@@ -60,19 +58,28 @@ class HandTracker:
                  swap_hands: Optional[bool] = None,
                  rotate_180: Optional[bool] = None,
                  depth_source: Optional[str] = None,
-                 config: Optional[dict] = None):
+                 config: Optional[dict] = None,
+                 preset: Optional[str] = None):
         """
         Initialize hand tracker with configuration.
 
         Args:
             config_path: Path to configuration JSON file, used when config is None
-            view_mode: "facing" or "pov"; overrides tracking.view_mode
+            view_mode: "facing" or "pov"; switches to that mode's built-in preset
+                unless preset is given, and overrides tracking.view_mode
             swap_hands: Extra left/right swap; overrides tracking.swap_hands
             rotate_180: Camera mounted upside down; overrides camera.rotate_180
             depth_source: "mediapipe" or "wilor"; overrides tracking.depth_source
             config: Configuration already loaded (e.g. by the GUI); copied, not shared
+            preset: Preset to switch to (see presets.py), e.g. "POV"
         """
         self.config = copy.deepcopy(config) if config is not None else self.load_config(config_path)
+        if preset is None and view_mode is not None:
+            preset = presets.MODE_PRESETS.get(view_mode)
+        if preset is not None:
+            if preset not in presets.names(self.config):
+                raise ValueError(f"Unknown preset '{preset}'. Presets: {', '.join(presets.names(self.config))}")
+            presets.apply(self.config, preset)
         for key, value in (("tracking.view_mode", view_mode), ("tracking.swap_hands", swap_hands),
                            ("camera.rotate_180", rotate_180), ("tracking.depth_source", depth_source)):
             if value is not None:
@@ -164,13 +171,8 @@ class HandTracker:
             self.camera.rotate_180 = bool(cam_config.get('rotate_180', False))
 
     def configure_calibration(self):
-        """Derive offsets, rotations and filters for the active view mode."""
-        # Shared values at the top level; the active mode's section (e.g.
-        # calibration.pov) overrides them, so each mode keeps its own offsets
-        base_calibration = {'position_offset': [0.0, 0.0, 0.0], 'scale': 1.0}
-        base_calibration.update(self.config.get('calibration', {}))
-        self.calibration = {k: v for k, v in base_calibration.items() if k not in VIEW_MODES}
-        self.calibration.update(base_calibration.get(self.view_mode, {}))
+        """Derive offsets, rotations and filters from the calibration settings."""
+        self.calibration = self.config['calibration']
         # Camera mounting relative to the HMD, as [pitch, yaw, roll] degrees
         # (e.g. a head-mounted camera tilted down toward the hands: negative pitch)
         self.camera_rotation = quat_from_euler_deg(*self.calibration.get('camera_rotation_deg', [0.0, 0.0, 0.0]))
@@ -546,36 +548,24 @@ class HandTracker:
             with open(config_path, 'r') as f:
                 config = json.load(f)
             print(f"Configuration loaded from {config_path}")
-            # Settings added after this file was written start at their defaults
-            gestures = config.setdefault('gestures', {})
-            gestures.setdefault('pinch_threshold', 0.05)
-            gestures.setdefault('finger_extended_threshold', 0.6)
-            for key, value in {**CONTROL_DEFAULTS, **GESTURE_DEFAULTS}.items():
-                gestures.setdefault(key, value)
-            calibration = config.setdefault('calibration', {})
-            if 'rotation_offset_deg' not in calibration:
-                # Older files kept it per view mode, though it does not depend
-                # on the camera; the POV one is the one that was tuned
-                modes = [calibration.get(mode, {}) for mode in VIEW_MODES]
-                tuned = calibration.get('pov', {}).get('rotation_offset_deg')
-                calibration['rotation_offset_deg'] = copy.deepcopy(tuned or DEFAULT_ROTATION_OFFSET_DEG)
-                for section in modes:
-                    section.pop('rotation_offset_deg', None)
-            return config
         except Exception as e:
             print(f"Error loading config: {e}")
             print("Using default configuration")
-            # Return default config
-            return {
-                "camera": {"device_id": 0, "width": 640, "height": 480, "fps": 30, "flip_horizontal": True, "source_mirrored": False, "backend": "auto", "rotate_180": False},
-                "tracking": {"max_hands": 2, "detection_confidence": 0.7, "tracking_confidence": 0.5, "model_complexity": 1, "view_mode": "facing", "swap_hands": False},
-                "network": {"host": "127.0.0.1", "port": 65432},
-                "gestures": {"pinch_threshold": 0.05, "finger_extended_threshold": 0.6, **CONTROL_DEFAULTS,
-                             **GESTURE_DEFAULTS},
-                "calibration": {"position_offset": [0.0, 0.0, 0.0], "scale": 1.0,
-                                "rotation_offset_deg": copy.deepcopy(DEFAULT_ROTATION_OFFSET_DEG)},
-                "debug": {"show_video": True, "show_landmarks": True, "show_fps": True, "log_gestures": False}
-            }
+            config = {}
+        calibration = config.setdefault('calibration', {})
+        if 'rotation_offset_deg' not in calibration:
+            # Older files kept it per view mode, though it does not depend
+            # on the camera; the POV one is the one that was tuned
+            modes = [calibration.get(mode) or {} for mode in VIEW_MODES]
+            tuned = (calibration.get('pov') or {}).get('rotation_offset_deg')
+            calibration['rotation_offset_deg'] = copy.deepcopy(tuned or DEFAULT_ROTATION_OFFSET_DEG)
+            for section in modes:
+                section.pop('rotation_offset_deg', None)
+        # Settings added after this file was written start at their defaults
+        fill_defaults(config, DEFAULT_CONFIG)
+        # Placement used to be kept per view mode; it now belongs to presets
+        presets.migrate(config)
+        return config
 
     def handedness_evidence(self, hand_world_landmarks, handedness) -> float:
         """
@@ -938,8 +928,11 @@ def main():
     parser = argparse.ArgumentParser(description="Hand Camera Driver for SteamVR")
     parser.add_argument("config", nargs="?", default="config.json",
                         help="Path to configuration JSON file")
+    parser.add_argument("--preset",
+                        help="Preset to use, e.g. POV or Facing (default: the one last used)")
     parser.add_argument("--mode", choices=VIEW_MODES,
-                        help="facing: camera in front of you; pov: camera looks where you look")
+                        help="facing: camera in front of you; pov: camera looks where you look. "
+                             "Uses that mode's built-in preset unless --preset is given")
     parser.add_argument("--swap-hands", action="store_true", default=None,
                         help="Swap left/right on top of what the mode implies")
     parser.add_argument("--rotate-180", action="store_true", default=None,
@@ -962,7 +955,7 @@ def main():
         # Create and run tracker
         tracker = HandTracker(args.config, view_mode=args.mode,
                               swap_hands=args.swap_hands, rotate_180=args.rotate_180,
-                              depth_source=args.depth)
+                              depth_source=args.depth, preset=args.preset)
         tracker.run()
     finally:
         if timer_raised:

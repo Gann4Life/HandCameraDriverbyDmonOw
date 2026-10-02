@@ -159,7 +159,8 @@ ALVR's own hand tracking and controller emulation
    - `source_mirrored`: set it to `true` only if your camera app already mirrors the
      image like a selfie. Iriun doesn't by default, so leave it at `false`.
    - `rotate_180`: set it to `true` if the camera is mounted upside down.
-3. Set `tracking.view_mode` to `"pov"` or `"facing"` (see section 1).
+3. Pick the preset for your camera position (see section 1): in the app, **Preset** at the top
+   of the Settings tab; in `config.json`, `"preset": "POV"` or `"preset": "Facing"`.
 
 ---
 
@@ -184,7 +185,8 @@ The order doesn't matter. `Camera.py` keeps retrying until the driver shows up.
    .venv\Scripts\python Camera.py
    ```
    Options:
-   - `--mode pov` or `--mode facing`: overrides `view_mode` from the config.
+   - `--preset NAME`: use that preset (`POV`, `Facing` or one of yours) instead of the last one used.
+   - `--mode pov` or `--mode facing`: use that mode's built-in preset.
    - `--swap-hands`: if left and right come out reversed.
    - `--rotate-180`: if the camera is mounted upside down.
 3. A preview window opens with the hand skeletons drawn on it. In SteamVR you should see
@@ -213,9 +215,26 @@ The tracker keeps running at full speed in the background, even when the game ha
 
 In `app.py`, all of these are in the Settings tab and apply live, so you can adjust them while
 looking at the 3D view and the cm readout. With `Camera.py`, edit `config.json` and restart it.
-POV and Facing have **separate** calibration values, under `calibration.pov` and
-`calibration.facing` (in the app: the Placement section follows the current camera position).
 
+### Presets
+Each camera position keeps its own settings in a **preset**: view, mirroring, placement,
+smoothing, gestures and hand identity. Switching preset puts all of them back, so tuning one
+position never undoes another. Settings marked *(all presets)* belong to the camera hardware or
+the whole app (camera index, resolution, field of view, tracking model, depth source, controller
+rotation, driver connection) and are the same in every preset.
+
+- **POV** and **Facing** are built in. You can change them, and **Restore default** puts them
+  back as shipped; they can't be renamed or deleted.
+- **Duplicate...** makes a new preset from the settings in use, e.g. for a second camera
+  position. Your own presets can be renamed and deleted.
+- **Save** stores the settings in use in the active preset. A *modified* tag next to the preset
+  means there are changes it doesn't have yet.
+
+Presets live in `config.json`: `preset` is the active one and `presets` holds yours, plus any
+built-in one you changed. Older configs with `calibration.pov` / `calibration.facing` are
+converted on load.
+
+### What to change
 | Problem in VR | What to change |
 |---|---|
 | Hands are rotated compared to your real hands | `rotation_offset_deg.left` / `.right`, in degrees `[x, y, z]`. A POV camera usually needs a z value: the reference setup uses `-127` for the left hand and `127` for the right. Adjust in steps of 10–20°. |
@@ -224,8 +243,8 @@ POV and Facing have **separate** calibration values, under `calibration.pov` and
 | Hands are too close or too far | Hold your wrist at a measured distance (e.g. 40 cm) and compare it with the cm the overlay shows. Fix it with `camera.hfov_deg` first, then `calibration.hand_scale`. |
 | Hands feel shaky or laggy | Press `f` to compare the filters, then adjust `calibration.filter`. A lower `min_cutoff` gives more smoothing; a higher `beta` gives less lag on fast moves. |
 
-Don't use `calibrate.py`: it's older than the per-mode calibration and writes keys that
-the tracker no longer reads.
+Don't use `calibrate.py`: it's older than the app and only sets `position_offset` and `scale`;
+the Settings tab covers both, with a live preview.
 
 ---
 
