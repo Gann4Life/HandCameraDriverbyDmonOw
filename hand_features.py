@@ -8,7 +8,7 @@ Everything here is scale-free (angles, or distances divided by palm size), so
 it does not depend on hand size or distance to the camera.
 """
 from dataclasses import dataclass
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -29,7 +29,7 @@ _PALM = (0, 5, 9, 13, 17)
 # Summed joint bend, in degrees, of an open hand and of a fully curled finger.
 # An open hand is not 0: the wrist-to-MCP line is not in line with the finger,
 # more so for ring and pinky. Taken from a recorded POV clip (5th percentile and
-# max) until the calibration wizard records each user's own range.
+# max); the gesture calibration replaces them with the user's own range, per preset.
 OPEN_CURL_DEG = {"thumb": 10.0, "index": 45.0, "middle": 35.0, "ring": 50.0, "pinky": 55.0}
 FULL_CURL_DEG = {"thumb": 100.0, "index": 210.0, "middle": 210.0, "ring": 205.0, "pinky": 215.0}
 
@@ -66,21 +66,27 @@ def ramp(value: float, zero_at: float, one_at: float) -> float:
 
 
 def compute_features(world_landmarks: Sequence[Sequence[float]], pinch_open: float = PINCH_OPEN,
-                     pinch_closed: float = PINCH_CLOSED) -> HandFeatures:
+                     pinch_closed: float = PINCH_CLOSED, open_deg: Optional[Sequence[float]] = None,
+                     full_deg: Optional[Sequence[float]] = None) -> HandFeatures:
     """
     Args:
         world_landmarks: 21 MediaPipe world landmarks, in metres
         pinch_open: Thumb-to-fingertip distance, in palm sizes, of no pinch
         pinch_closed: ... and of a full pinch
+        open_deg: Summed bend of each open finger, in FINGERS order (from the
+            gesture calibration); OPEN_CURL_DEG when None
+        full_deg: ... and of each fully curled finger; FULL_CURL_DEG when None
 
     Returns:
         The hand's features
     """
+    open_deg = open_deg or [OPEN_CURL_DEG[f] for f in FINGERS]
+    full_deg = full_deg or [FULL_CURL_DEG[f] for f in FINGERS]
     pts = np.asarray(world_landmarks, dtype=float)
     palm_size = float(np.linalg.norm(pts[9] - pts[0])) or 1e-6
 
     curls, curl_degs = [], []
-    for finger in FINGERS:
+    for i_finger, finger in enumerate(FINGERS):
         chain = _CHAINS[finger]
         bones = [pts[chain[i + 1]] - pts[chain[i]] for i in range(len(chain) - 1)]
         # Bend at each joint = angle between consecutive bones. The thumb's
@@ -88,7 +94,7 @@ def compute_features(world_landmarks: Sequence[Sequence[float]], pinch_open: flo
         joints = range(1, len(bones) - 1) if finger == "thumb" else range(len(bones) - 1)
         bend = sum(_angle_deg(bones[j], bones[j + 1]) for j in joints)
         curl_degs.append(bend)
-        curls.append(ramp(bend, OPEN_CURL_DEG[finger], FULL_CURL_DEG[finger]))
+        curls.append(ramp(bend, float(open_deg[i_finger]), float(full_deg[i_finger])))
 
     # Splay: angle between neighbouring proximal bones, projected onto the palm plane
     normal = np.cross(pts[5] - pts[0], pts[17] - pts[0])

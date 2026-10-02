@@ -14,6 +14,7 @@ import presets
 from Camera import HandTracker
 from gui.camera_view import CameraView
 from gui.environments import relaunch, wilor_installed_here, wilor_launcher
+from gui.gesture_calibration import GestureCalibrationDialog
 from gui.hand_view_3d import HandView3D
 from gui.live_panel import LivePanel
 from gui.log_panel import LogPanel, capture_output
@@ -101,6 +102,10 @@ class MainWindow(QMainWindow):
         self.depth_action.setToolTip("Heavy 3D hand model for steadier depth (experimental)")
         self.depth_action.triggered.connect(lambda checked: self.settings_panel.set_value(
             "tracking.depth_source", "wilor" if checked else "mediapipe"))
+        self.calibrate_action = QAction("Calibrate gestures", self)
+        self.calibrate_action.setToolTip("Measure your open hand and fist from where the camera is, "
+                                         "for steadier trigger and grip")
+        self.calibrate_action.triggered.connect(self._calibrate_gestures)
         save_action = QAction("Save", self)
         save_action.setShortcut(QKeySequence.Save)
         save_action.triggered.connect(self.save_config)
@@ -108,7 +113,7 @@ class MainWindow(QMainWindow):
         revert_action.setToolTip("Discard changes since the last save")
         revert_action.triggered.connect(self.revert_config)
 
-        for action in (self.start_action, swap_action, self.depth_action):
+        for action in (self.start_action, swap_action, self.depth_action, self.calibrate_action):
             toolbar.addAction(action)
         toolbar.addSeparator()
         toolbar.addAction(save_action)
@@ -183,6 +188,19 @@ class MainWindow(QMainWindow):
         self._set_label(self.driver_label, "Stopped", MUTED_COLOR)
         if reason:
             self.statusBar().showMessage(reason)
+
+    def _calibrate_gestures(self):
+        if self.worker is None:
+            QMessageBox.information(self, "Calibrate gestures", "Start tracking first (F5).")
+            return
+        current = (get_value(self.config, "gestures.curl_open_deg"), get_value(self.config, "gestures.curl_full_deg"))
+        dialog = GestureCalibrationDialog(lambda: self.worker.latest() if self.worker else (-1, None), current, self)
+        if dialog.exec() and dialog.changes:
+            for key, value in dialog.changes.items():
+                set_value(self.config, key, value)
+            self._on_settings_changed(dialog.changes)
+            self.statusBar().showMessage(f"Gestures calibrated for {presets.active(self.config)}. "
+                                         "Save to keep it.", 5000)
 
     def _on_settings_changed(self, changes: dict):
         if changes.get("tracking.depth_source") == "wilor" and not wilor_installed_here():

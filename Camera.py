@@ -571,10 +571,13 @@ class HandTracker:
             calibration['rotation_offset_deg'] = copy.deepcopy(tuned or DEFAULT_ROTATION_OFFSET_DEG)
             for section in modes:
                 section.pop('rotation_offset_deg', None)
-        # Settings added after this file was written start at their defaults
+        # Settings added after this file was written start at their defaults,
+        # or at the active preset's value for one the preset sets
+        in_file = set(presets.snapshot(config))
         fill_defaults(config, DEFAULT_CONFIG)
         # Placement used to be kept per view mode; it now belongs to presets
         presets.migrate(config)
+        presets.use_preset_values_for_new_settings(config, in_file)
         return config
 
     def handedness_evidence(self, hand_world_landmarks, handedness) -> float:
@@ -679,7 +682,8 @@ class HandTracker:
         scores: Dict[str, float] = {}
         if world is not None:
             features = compute_features(world, float(gesture_config['pinch_open']),
-                                        float(gesture_config['pinch_closed']))
+                                        float(gesture_config['pinch_closed']),
+                                        gesture_config.get('curl_open_deg'), gesture_config.get('curl_full_deg'))
             trigger_value, grip_value = self.control_mapper(hand_type, features, now)
             scores = score_gestures(features, self.control_mapper.pinch_strength(features), gesture_config)
             gesture = self.gesture_classifier(hand_type, scores)

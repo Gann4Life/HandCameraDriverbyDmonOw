@@ -6,7 +6,7 @@ the index closes or how hard thumb and index pinch. Both can be on at once
 """
 from typing import Dict, Tuple
 
-from hand_features import HandFeatures, ramp
+from hand_features import FINGERS, FULL_CURL_DEG, OPEN_CURL_DEG, HandFeatures, ramp
 from utils.one_euro import OneEuroFilter
 
 # Config keys under "gestures" and their defaults; load_config fills in
@@ -22,6 +22,17 @@ DEFAULTS = {
     "grip_curl_full": 0.80,
     "controls_min_cutoff": 2.0,  # One Euro smoothing of trigger and grip
     "controls_beta": 5.0,
+    # Latched controls jump to fully pressed above latch_on and only let go
+    # below latch_off, so a value hovering near the game's own threshold
+    # doesn't grab and drop over and over
+    "grip_latch": False,
+    "trigger_latch": False,
+    "latch_on": 0.6,
+    "latch_off": 0.35,
+    # Summed bend of each finger (thumb..pinky), open and fully curled, in
+    # degrees; Calibrate gestures measures them for the user and the view
+    "curl_open_deg": [OPEN_CURL_DEG[f] for f in FINGERS],
+    "curl_full_deg": [FULL_CURL_DEG[f] for f in FINGERS],
 }
 
 # How far below the gate the pinch fades out completely
@@ -34,6 +45,7 @@ class ControlMapper:
     def __init__(self, config: Dict):
         self.config = {key: config.get(key, default) for key, default in DEFAULTS.items()}
         self._filters: Dict[str, OneEuroFilter] = {}
+        self._latched: Dict[Tuple[str, str], bool] = {}
 
     def pinch_strength(self, features: HandFeatures) -> float:
         """Thumb-index pinch, 0..1, faded out when the index tip is in the palm (a fist)."""
@@ -59,4 +71,16 @@ class ControlMapper:
             smoother = OneEuroFilter(float(self.config["controls_min_cutoff"]), float(self.config["controls_beta"]))
             self._filters[hand_type] = smoother
         trigger, grip = smoother(self.raw(features), t)
-        return min(1.0, max(0.0, trigger)), min(1.0, max(0.0, grip))
+        trigger, grip = min(1.0, max(0.0, trigger)), min(1.0, max(0.0, grip))
+        if self.config["trigger_latch"]:
+            trigger = self._latch(hand_type, "trigger", trigger)
+        if self.config["grip_latch"]:
+            grip = self._latch(hand_type, "grip", grip)
+        return trigger, grip
+
+    def _latch(self, hand_type: str, control: str, value: float) -> float:
+        key = (hand_type, control)
+        held = self._latched.get(key, False)
+        held = value >= float(self.config["latch_off"]) if held else value >= float(self.config["latch_on"])
+        self._latched[key] = held
+        return 1.0 if held else 0.0

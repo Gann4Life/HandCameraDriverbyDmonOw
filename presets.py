@@ -18,7 +18,9 @@ from utils.config_utils import get_value, set_value
 # Built-in presets, as changes to the factory defaults
 BUILTIN_PRESETS: Dict[str, Dict[str, Any]] = {
     # Seen from behind, the hand's apparent size wobbles more, and so does its depth
-    "POV": {"tracking.view_mode": "pov", "calibration.steady_hand_size": True},
+    # Fingers seen from behind are partly hidden, so their curl is less sure: latch grab and trigger
+    "POV": {"tracking.view_mode": "pov", "calibration.steady_hand_size": True,
+            "gestures.grip_latch": True, "gestures.trigger_latch": True},
     # Tuned live with a webcam facing the user, which shows a mirrored image
     "Facing": {
         "tracking.view_mode": "facing",
@@ -209,6 +211,18 @@ def migrate(config: Dict[str, Any]) -> None:
         if name in stored(preset):
             stored(config)[name] = stored(preset)[name]
     apply(config, MODE_PRESETS[current_mode])
+
+
+def use_preset_values_for_new_settings(config: Dict[str, Any], in_file: set) -> None:
+    """
+    Settings the config file did not have yet (in_file: the dotted keys it
+    had) take the active preset's value instead of the factory default, so
+    a built-in preset's own value applies and the preset is not shown as modified.
+    """
+    preset = values(config, active(config))
+    for key, value in preset.items():
+        if key not in in_file:
+            set_value(config, key, copy.deepcopy(value))
 
 
 def _adopt_formerly_shared(config: Dict[str, Any]) -> None:
