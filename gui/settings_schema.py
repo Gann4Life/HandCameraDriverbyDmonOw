@@ -76,8 +76,9 @@ SETTINGS = (
     Setting("camera.hfov_deg", "Field of view", "float", "Camera", minimum=30, maximum=130, step=1,
             decimals=0, unit="°", help="Horizontal field of view of the camera. Wrong values make hands "
                                        "look nearer or farther than they are."),
-    Setting("camera.source_mirrored", "Source already mirrored", "bool", "Camera", advanced=True,
-            help="Some phone-camera apps mirror the picture before sending it."),
+    Setting("camera.source_mirrored", "Source already mirrored", "bool", "Camera",
+            help="Phone front cameras often send a mirrored picture. To check, turn Mirror image off, face "
+                 "the camera and raise your right hand: if it shows on the right of the preview, turn this on."),
     Setting("camera.backend", "Capture backend", "choice", "Camera", advanced=True, apply=Apply.CAMERA,
             choices=(("auto", "Automatic"), ("msmf", "Media Foundation"), ("dshow", "DirectShow"))),
     Setting("camera.stall_timeout", "Reconnect after", "float", "Camera", advanced=True, minimum=0.5,
@@ -91,7 +92,8 @@ SETTINGS = (
     Setting("camera.facing_distance", "Distance to camera", "float", "View", minimum=0.2, maximum=3.0,
             step=0.05, unit=" m", help="Only for a camera in front of you."),
     Setting("tracking.swap_hands", "Swap left and right", "bool", "View",
-            help="Use it if your hands come out the wrong way round."),
+            help="Use it if your hands come out the wrong way round. If they also move the wrong way, "
+                 "check Source already mirrored instead."),
     Setting("tracking.palm_facing", "Palms face", "choice", "View", advanced=True,
             choices=(("mode", "Depends on camera position"), ("away", "Away from the camera"),
                      ("auto", "Detect automatically"))),
