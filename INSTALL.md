@@ -251,8 +251,9 @@ tab has the ones that belong to the camera hardware or the whole app (camera ind
 field of view, tracking model, depth source, driver connection): they are the same in every
 preset and save themselves.
 
-- **Facing** (the default) and **POV** (experimental) are built in. You can change them, and **Restore default** puts them
-  back as shipped; they can't be renamed or deleted.
+- **Facing** (the default), **POV** (experimental) and **POV Pointer** (POV with the hands turned
+  for pointing) are built in. You can change them, and **Restore default** puts them back as
+  shipped; they can't be renamed or deleted.
 - **Duplicate...** makes a new preset from the settings in use, e.g. for a second camera
   position. Your own presets can be renamed and deleted.
 - **Save preset** stores the settings in use in the active preset. An *unsaved changes* tag next to
