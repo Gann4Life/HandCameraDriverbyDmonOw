@@ -20,6 +20,7 @@ from config_defaults import DEFAULT_CONFIG, DEFAULT_ROTATION_OFFSET_DEG, fill_de
 import presets
 from hand_identity import HandDetection, HandIdentityTracker
 from depth_assist import WiLoRDepthAssist
+from hand_fit import PALM, HandFitter, HandShape, bend_angles
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
 from utils.config_utils import get_value, set_value
 from utils.hand_size import HandSizeStabilizer
@@ -189,6 +190,13 @@ class HandTracker:
         # size wobble doesn't become depth jitter
         self.steady_hand_size = bool(self.calibration.get('steady_hand_size', False))
         self.hand_size = HandSizeStabilizer(int(self.calibration.get('hand_size_window', 90)))
+        # Rebuild each hand in 3D from MediaPipe's 2D points with a hand model
+        # of fixed size (hand_fit), instead of using MediaPipe's 3D shape
+        self.rebuild_hand = bool(self.calibration.get('rebuild_hand', False))
+        self.hand_fitter = None  # made for the frame size on first use
+        self.hand_fitter_key = None
+        # Per side: (time, fit parameters, wrist in pixels, time of the last fresh start)
+        self.hand_fits: Dict[str, Tuple[float, np.ndarray, np.ndarray, float]] = {}
         # Smoothing, per hand: image-plane position, depth (noisier, so
         # filtered on its own) and rotation. 'f' in the preview cycles modes.
         self.filter_config = self.calibration.get('filter', {})
@@ -335,6 +343,7 @@ class HandTracker:
         self.configure_view()
         self.build_filters()  # each hand's history belonged to the other
         self.hand_size.reset()
+        self.hand_fits = {}
         print("Hands swapped")
 
     def fit_hand(self, hand_landmarks, world: List[Tuple[float, float, float]],
@@ -380,6 +389,54 @@ class HandTracker:
         if not 0.05 < points[0, 2] < 3.0:
             return None
         return points * np.array([-1.0 if self.mirror_x else 1.0, -1.0, -1.0])
+
+    # Starting over from fresh poses is several times slower than following
+    # last frame's fit, so a hand does it at most this often
+    REBUILD_REFRESH_SECONDS = 0.2
+    # Last frame's fit is only a starting point while the hand is still near
+    # it: wrist movement as a fraction of the frame width, and time
+    REBUILD_CONTINUITY = 0.08
+    REBUILD_MEMORY_SECONDS = 0.1
+
+    def rebuild_hand_points(self, landmarks: List[Tuple[float, float, float]], world: List[Tuple[float, float, float]],
+                            hand_type: str, frame_width: int, frame_height: int, now: float):
+        """
+        Rebuild a hand in 3D from its 2D landmarks with hand_fit's model, for
+        when MediaPipe's own 3D shape is unreliable (seen from behind).
+
+        Returns:
+            (world, points): the hand as MediaPipe-style world landmarks
+            (camera axes, centred on the palm) and as 21 x 3 joints in OpenVR
+            camera space, like fit_hand; or None if it could not be fitted
+        """
+        key = (frame_width, frame_height, self.hfov_deg, self.hand_scale)
+        if self.hand_fitter is None or self.hand_fitter_key != key:
+            focal = (frame_width / 2.0) / math.tan(math.radians(self.hfov_deg) / 2.0)
+            self.hand_fitter = HandFitter(HandShape.default(self.hand_scale), focal,
+                                          (frame_width / 2.0, frame_height / 2.0))
+            self.hand_fitter_key = key
+            self.hand_fits = {}
+        observed = np.array([(x * frame_width, y * frame_height) for x, y, _ in landmarks])
+        # The model is fitted to the picture, where a mirrored frame shows a
+        # right hand as a left one
+        image_right = (hand_type == "right") != self.frame_mirrored
+        previous, refreshed_at = None, -math.inf
+        state = self.hand_fits.get(hand_type)
+        if state is not None:
+            then, params, wrist, refreshed_at = state
+            if (now - then <= self.REBUILD_MEMORY_SECONDS
+                    and np.linalg.norm(observed[0] - wrist) <= self.REBUILD_CONTINUITY * frame_width):
+                previous = params
+        result = self.hand_fitter.fit(observed, image_right, previous, palm_away=self.palm_away,
+                                      bends=bend_angles(world),
+                                      allow_refresh=now - refreshed_at >= self.REBUILD_REFRESH_SECONDS)
+        if result is None:
+            return None
+        self.hand_fits[hand_type] = (now, result.params, observed[0], now if result.refreshed else refreshed_at)
+        points = result.points
+        centred = points - points[PALM].mean(axis=0)
+        return ([tuple(float(v) for v in p) for p in centred],
+                points * np.array([-1.0 if self.mirror_x else 1.0, -1.0, -1.0]))
 
     def estimate_wrist_position(self, hand_landmarks, world: List[Tuple[float, float, float]],
                                 frame_width: int, frame_height: int) -> Optional[Tuple[float, float, float]]:
@@ -573,7 +630,9 @@ class HandTracker:
             calibration['rotation_offset_deg'] = copy.deepcopy(tuned or DEFAULT_ROTATION_OFFSET_DEG)
             for section in modes:
                 section.pop('rotation_offset_deg', None)
-        # Settings added after this file was written start at their defaults
+        # Settings added after this file was written start at the active
+        # preset's value, or else at their defaults
+        presets.fill_new_settings(config)
         fill_defaults(config, DEFAULT_CONFIG)
         # Placement used to be kept per view mode; it now belongs to presets
         presets.migrate(config)
@@ -634,15 +693,21 @@ class HandTracker:
             world = [(lm.x, lm.y, lm.z) for lm in hand_world_landmarks.landmark]
 
         # Wrist position in OpenVR camera space, in metres
+        now = time.perf_counter()
         fitted = None
-        if world is not None:
+        if world is not None and self.rebuild_hand:
+            rebuilt = self.rebuild_hand_points(landmarks, world, hand_type, frame_width, frame_height, now)
+            if rebuilt is not None:
+                # The rebuilt hand stands in for MediaPipe's from here on:
+                # rotation and finger curl are read from it too
+                world, fitted = rebuilt
+        if world is not None and fitted is None:
             fitted = self.fit_hand(hand_landmarks, world, frame_width, frame_height, hand_type)
         camera_position = tuple(float(v) for v in fitted[0]) if fitted is not None else None
         if camera_position is None:
             camera_position = self.last_camera_position.get(hand_type)
         if camera_position is None:
             camera_position = self.estimate_wrist_position_fallback(landmarks)
-        now = time.perf_counter()
         if self.depth_source == 'wilor':
             camera_position = self.apply_assisted_depth(landmarks[0][:2], camera_position, now)
         camera_position = self.smooth_camera_position(hand_type, camera_position, now)

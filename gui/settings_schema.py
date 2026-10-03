@@ -88,10 +88,11 @@ SETTINGS = (
 
     # View
     Setting("tracking.view_mode", "Camera position", "choice", "View",
-            choices=(("pov", "On my head or chest, looking where I look"),
-                     ("facing", "In front of me, looking at me")),
+            choices=(("facing", "In front of me, looking at me"),
+                     ("pov", "On my head or chest, looking where I look (experimental)")),
             help="How the picture maps to your hands. Part of the preset: for a camera somewhere else, "
-                 "duplicate a preset and change it there."),
+                 "duplicate a preset and change it there. On your head or chest, the camera sees the backs "
+                 "of your hands, which is harder to track: keep Rebuild hands in 3D on (Depth) there."),
     Setting("camera.facing_distance", "Distance to camera", "float", "View", minimum=0.2, maximum=3.0,
             step=0.05, unit=" m", help="Only for a camera in front of you."),
     Setting("tracking.swap_hands", "Swap left and right", "bool", "View",
@@ -118,9 +119,15 @@ SETTINGS = (
             help="How the controller sits in your hand."),
 
     # Depth
+    Setting("calibration.rebuild_hand", "Rebuild hands in 3D", "bool", "Depth",
+            help="Builds each hand from where its joints appear in the picture, with a hand model whose "
+                 "fingers only bend toward the palm, instead of using the tracker's own 3D hand. Seen from "
+                 "behind, that one folds and twists, which shakes the distance, rotation and gestures. "
+                 "On in the POV preset; with the palms toward the camera it is not needed."),
     Setting("calibration.steady_hand_size", "Steady hand size", "bool", "Depth",
             help="Keeps each hand the same size over time, so its distance from the camera shakes less. "
-                 "Helps most with a camera behind your hands."),
+                 "Helps most with a camera behind your hands. Not needed with Rebuild hands in 3D, whose "
+                 "hand model has a fixed size."),
     Setting("calibration.hand_size_window", "Hand size memory", "int", "Depth", minimum=10, maximum=600,
             advanced=True, help="Frames the steady hand size is taken from. More is steadier but adapts "
                                 "slower if tracking misjudges the hand at first."),
