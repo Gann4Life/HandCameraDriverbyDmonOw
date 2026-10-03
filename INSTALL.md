@@ -34,7 +34,9 @@ tracking also show each finger. Switching takes effect the next time SteamVR sta
 - **A spot for the camera.** There are two modes:
   - **Facing** (the default, recommended): the camera is in front of you, looking at you.
   - **POV** (experimental): the camera is on your head or chest and looks where you
-    look, so it sees the backs of your hands. Hands can twist or jitter in this mode for now.
+    look, so it sees the backs of your hands. Seen from behind, the tracker's own 3D hand folds
+    and twists, so this preset rebuilds each hand from where its joints appear in the picture
+    (**Rebuild hands in 3D**, in the Depth section).
 
 ### Software to install
 | Software | Why | Where |
@@ -270,6 +272,7 @@ converted on load.
 | Hands are too close or too far | Hold your wrist at a measured distance (e.g. 40 cm) and compare it with the cm the overlay shows. Fix it with `camera.hfov_deg` first, then `calibration.hand_scale`. |
 | Hands feel shaky or laggy | Press `f` to compare the filters, then adjust `calibration.filter`. A lower `min_cutoff` gives more smoothing; a higher `beta` gives less lag on fast moves. |
 | Hands drift toward and away from you | Turn on **Steady hand size** (`calibration.steady_hand_size`, on in the POV preset). It holds each hand at its recent median size, so its distance stops wobbling. |
+| Hands twist, fold or flip when the camera sees their backs | Turn on **Rebuild hands in 3D** (`calibration.rebuild_hand`, on in the POV preset). Each hand is rebuilt from its joints in the picture with a hand model whose fingers only bend toward the palm, which steadies distance, rotation and gestures. It costs a few milliseconds per hand. |
 
 Don't use `calibrate.py`: it's older than the app and only sets `position_offset` and `scale`;
 the Settings tab covers both, with a live preview.
