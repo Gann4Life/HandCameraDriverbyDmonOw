@@ -36,6 +36,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "scale": 1.0,
         "hand_scale": 1.0,
         "steady_hand_size": False,
+        "rebuild_hand": False,
         "hand_size_window": 90,
         "position_offset": [0.0, 0.0, 0.0],
         "camera_rotation_deg": [0.0, 0.0, 0.0],

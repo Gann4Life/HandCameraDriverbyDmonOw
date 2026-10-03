@@ -26,10 +26,11 @@ BUILTIN_PRESETS: Dict[str, Dict[str, Any]] = {
         "calibration.rotation_offset_deg.left": [0.0, 0.0, -90.0],
         "calibration.rotation_offset_deg.right": [0.0, 0.0, 90.0],
     },
-    # Seen from behind, the hand's apparent size wobbles more, and so does its depth
+    # Seen from behind, MediaPipe's 3D hand folds and wobbles: it is rebuilt from the 2D points
     "POV": {
         "tracking.view_mode": "pov",
         "calibration.steady_hand_size": True,
+        "calibration.rebuild_hand": True,
         "calibration.rotation_offset_deg.left": [0.0, 35.0, -115.0],
         "calibration.rotation_offset_deg.right": [0.0, -35.0, 115.0],
     },
@@ -199,6 +200,22 @@ def validate_name(config: Dict[str, Any], name: str, current: Optional[str] = No
     if name.lower() in taken:
         return f"There is already a preset called {name}."
     return None
+
+
+_MISSING = object()
+
+
+def fill_new_settings(config: Dict[str, Any]) -> None:
+    """
+    A setting added after the file was written starts at the active preset's
+    value, so a built-in preset that turns it on does not open with unsaved
+    changes. Run before the factory defaults fill in the rest.
+    """
+    if "preset" not in config:
+        return  # migrate() builds the presets of an older file
+    for key, value in values(config, active(config)).items():
+        if get_value(config, key, _MISSING) is _MISSING:
+            set_value(config, key, copy.deepcopy(value))
 
 
 def migrate(config: Dict[str, Any]) -> None:
