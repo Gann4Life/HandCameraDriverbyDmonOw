@@ -12,29 +12,12 @@ driver connection...) are shared by every preset.
 import copy
 from typing import Any, Dict, List, Optional
 
+from builtin_presets import BUILTIN_PRESETS
 from config_defaults import DEFAULT_CONFIG
 from utils.config_utils import get_value, set_value
 
-# Built-in presets, as changes to the factory defaults
-BUILTIN_PRESETS: Dict[str, Dict[str, Any]] = {
-    # Tuned live with a webcam facing the user, which shows a mirrored image
-    "Facing": {
-        "tracking.view_mode": "facing",
-        "camera.source_mirrored": True,
-        "calibration.filter.position.beta": 1.41,
-        "calibration.position_offset": [0.0, 0.0, -0.2],
-        "calibration.rotation_offset_deg.left": [0.0, 0.0, -90.0],
-        "calibration.rotation_offset_deg.right": [0.0, 0.0, 90.0],
-    },
-    # Seen from behind, MediaPipe's 3D hand folds and wobbles: it is rebuilt from the 2D points
-    "POV": {
-        "tracking.view_mode": "pov",
-        "calibration.steady_hand_size": True,
-        "calibration.rebuild_hand": True,
-        "calibration.rotation_offset_deg.left": [0.0, 35.0, -115.0],
-        "calibration.rotation_offset_deg.right": [0.0, -35.0, 115.0],
-    },
-}
+# The built-in presets (BUILTIN_PRESETS) are generated from the maintainer's
+# saved presets by tools/publish_presets.py.
 # The built-in preset for each view mode, for older configs and --mode
 MODE_PRESETS = {"pov": "POV", "facing": "Facing"}
 DEFAULT_PRESET = "Facing"
