@@ -286,10 +286,12 @@ vr::DriverPose_t MyControllerDeviceDriver::GetPose()
 	hand_rotation.z = hand_rotation_qz_.load();
 
 	// The tracker gives the hand relative to the user's view of the camera. A camera on
-	// the head turns with it; a camera fixed in the room stays where the tracking space's
-	// forward points (set by recentering the headset while facing the camera), so looking
-	// around does not move the hands. Either way the hands follow the headset's position.
-	const vr::HmdQuaternion_t frame = room_anchor_.load() ? HmdQuaternion_Identity : hmd_orientation;
+	// the head turns with it; a camera fixed in the room stays in the direction the
+	// headset faced when it was last recentered on it, so looking around does not move
+	// the hands. Either way the hands follow the headset's position.
+	const float half_yaw = room_yaw_.load() * 0.5f;
+	const vr::HmdQuaternion_t room_frame = { std::cos( half_yaw ), 0.f, std::sin( half_yaw ), 0.f };
+	const vr::HmdQuaternion_t frame = room_anchor_.load() ? room_frame : hmd_orientation;
 
 	pose.qRotation = frame * hand_rotation;
 
@@ -574,6 +576,11 @@ void MyControllerDeviceDriver::UpdateFingerCurls( const std::array< float, 5 > &
 void MyControllerDeviceDriver::SetRoomAnchor( bool room )
 {
 	room_anchor_.store( room );
+}
+
+void MyControllerDeviceDriver::SetRoomYaw( float room_yaw )
+{
+	room_yaw_.store( room_yaw );
 }
 
 void MyControllerDeviceDriver::SetProfile( ControllerProfile profile )

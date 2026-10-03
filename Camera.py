@@ -99,6 +99,8 @@ class HandTracker:
         # Config values the tracker changed on its own (e.g. WiLoR failing to
         # load), for a GUI to pick up and clear
         self.changed_by_tracker: Dict[str, Any] = {}
+        # Set from another thread: tell the driver the user is facing the camera now
+        self.recenter_requested = False
         # Whether step()'s caller shows an OpenCV window that needs pumping
         self.cv_preview = False
         self.camera = None
@@ -935,6 +937,10 @@ class HandTracker:
                     print(f"{hand.data.hand_type}: {hand.data.gesture} "
                           f"T:{hand.data.trigger_value:.2f} G:{hand.data.grip_value:.2f}")
 
+        if self.recenter_requested:
+            self.recenter_requested = False
+            # A camera fixed in the room is where the headset looks now
+            self.socket_client.send("RECENTER:1")
         controller_type = str(self.config['network'].get('controller_type', 'touch'))
         for hand in tracked:
             self.socket_client.send(hand.data.to_protocol_string(controller_type, self.room_anchor))

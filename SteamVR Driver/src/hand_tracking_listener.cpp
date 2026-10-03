@@ -3,6 +3,7 @@
 #include "controller_device_driver.h"
 #include "driverlog.h"
 
+#include <cmath>
 #include <cstring>
 
 HandTrackingListener::HandTrackingListener( MyControllerDeviceDriver *left_controller, MyControllerDeviceDriver *right_controller )
@@ -201,6 +202,13 @@ void HandTrackingListener::ProcessHandData( const std::string &data )
 	// leave them out)
 	std::map<std::string, std::string> params = ParseProtocolString( data );
 
+	// RECENTER:1 on a line of its own: the user is facing the camera now
+	if ( params.count( "RECENTER" ) )
+	{
+		CaptureRoomForward();
+		return;
+	}
+
 	// The devices are added to SteamVR with the type the first message asks for
 	const int profile = static_cast<int>( params[ "TYPE" ] == "INDEX" ? ControllerProfile::Index : ControllerProfile::Touch );
 	int expected = -1;
@@ -226,8 +234,16 @@ void HandTrackingListener::ProcessHandData( const std::string &data )
 		return;
 	}
 
-	// A camera fixed in the room, or one that turns with the head (the default)
-	controller->SetRoomAnchor( params[ "ANCHOR" ] == "ROOM" );
+	// A camera fixed in the room, or one that turns with the head (the default). Until the
+	// user recenters, the camera is taken to be where the headset looks when the first
+	// hand is seen: putting a hand in front of the camera usually means facing it.
+	const bool room = params[ "ANCHOR" ] == "ROOM";
+	if ( room && !room_forward_set_ )
+	{
+		CaptureRoomForward();
+	}
+	room_forward_set_ = room_forward_set_ && room;
+	controller->SetRoomAnchor( room );
 
 	// Update position
 	if ( params.count( "X" ) && params.count( "Y" ) && params.count( "Z" ) )
@@ -274,6 +290,26 @@ void HandTrackingListener::ProcessHandData( const std::string &data )
 		}
 		controller->UpdateFingerCurls( curls );
 	}
+}
+
+void HandTrackingListener::CaptureRoomForward()
+{
+	vr::TrackedDevicePose_t hmd_pose{};
+	vr::VRServerDriverHost()->GetRawTrackedDevicePoses( 0.f, &hmd_pose, 1 );
+	if ( !hmd_pose.bPoseIsValid )
+	{
+		return;
+	}
+	// Only the heading counts: the hands stay level however the head was tilted.
+	// The headset looks along its -Z axis; turned by yaw about +Y, its Z axis is
+	// (sin yaw, 0, cos yaw).
+	const vr::HmdMatrix34_t &m = hmd_pose.mDeviceToAbsoluteTracking;
+	const float yaw = std::atan2( m.m[ 0 ][ 2 ], m.m[ 2 ][ 2 ] );
+	left_controller_->SetRoomYaw( yaw );
+	right_controller_->SetRoomYaw( yaw );
+	room_forward_set_ = true;
+	DriverLog( "HandTrackingListener: camera direction set, %.0f degrees from the tracking space's forward",
+		yaw * 57.29578f );
 }
 
 bool HandTrackingListener::RequestedProfile( ControllerProfile &profile ) const
