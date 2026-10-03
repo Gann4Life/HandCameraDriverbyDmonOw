@@ -285,8 +285,13 @@ vr::DriverPose_t MyControllerDeviceDriver::GetPose()
 	hand_rotation.y = hand_rotation_qy_.load();
 	hand_rotation.z = hand_rotation_qz_.load();
 
-	// Apply hand rotation to the HMD orientation
-	pose.qRotation = hmd_orientation * hand_rotation;
+	// The tracker gives the hand relative to the user's view of the camera. A camera on
+	// the head turns with it; a camera fixed in the room stays where the tracking space's
+	// forward points (set by recentering the headset while facing the camera), so looking
+	// around does not move the hands. Either way the hands follow the headset's position.
+	const vr::HmdQuaternion_t frame = room_anchor_.load() ? HmdQuaternion_Identity : hmd_orientation;
+
+	pose.qRotation = frame * hand_rotation;
 
 	// Use hand tracking position if available
 	const vr::HmdVector3_t offset_position = {
@@ -295,8 +300,7 @@ vr::DriverPose_t MyControllerDeviceDriver::GetPose()
 		hand_position_z_.load()
 	};
 
-	// Rotate our offset by the hmd quaternion (so the controllers are always facing towards us), and add then add the position of the hmd to put it into position.
-	vr::HmdVector3_t position = hmd_position + ( offset_position * hmd_orientation );
+	vr::HmdVector3_t position = hmd_position + ( offset_position * frame );
 
 	// The tracker places a Touch controller in the hand. An Index controller's
 	// origin sits elsewhere in the hand, so move it to where an Index would be
@@ -565,6 +569,11 @@ void MyControllerDeviceDriver::UpdateFingerCurls( const std::array< float, 5 > &
 	{
 		finger_curls_[ i ].store( curls[ i ] );
 	}
+}
+
+void MyControllerDeviceDriver::SetRoomAnchor( bool room )
+{
+	room_anchor_.store( room );
 }
 
 void MyControllerDeviceDriver::SetProfile( ControllerProfile profile )

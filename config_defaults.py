@@ -21,7 +21,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "tracking": {
         "max_hands": 2, "detection_confidence": 0.7, "tracking_confidence": 0.5, "model_complexity": 1,
-        "view_mode": "facing", "palm_facing": "mode", "swap_hands": False, "depth_source": "mediapipe",
+        "view_mode": "facing", "hands_follow": "head", "palm_facing": "mode", "swap_hands": False, "depth_source": "mediapipe",
         "depth_assist": {"max_rate_hz": 10.0, "max_age": 0.5, "match_radius": 0.12, "scale": 1.0},
         "identity": {"continuity_radius": 0.15, "memory_seconds": 0.4, "switch_frames": 6,
                      "duplicate_radius": 0.05, "order_weight": 1.5},

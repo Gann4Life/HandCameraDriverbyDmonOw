@@ -197,7 +197,8 @@ void HandTrackingListener::ListenThread()
 void HandTrackingListener::ProcessHandData( const std::string &data )
 {
 	// Parse protocol string: HAND:LEFT,X:0.5,Y:0.3,Z:-0.2,QW:1.0,QX:0.0,QY:0.0,QZ:0.0,TRIGGER:0.8,GRIP:0.0,GESTURE:POINT,
-	// TYPE:INDEX,CURL:0.10;0.20;0.30;0.40;0.50 (TYPE and CURL are newer; older trackers leave them out)
+	// TYPE:INDEX,CURL:0.10;0.20;0.30;0.40;0.50,ANCHOR:ROOM (TYPE, CURL and ANCHOR are newer; older trackers
+	// leave them out)
 	std::map<std::string, std::string> params = ParseProtocolString( data );
 
 	// The devices are added to SteamVR with the type the first message asks for
@@ -224,6 +225,9 @@ void HandTrackingListener::ProcessHandData( const std::string &data )
 	{
 		return;
 	}
+
+	// A camera fixed in the room, or one that turns with the head (the default)
+	controller->SetRoomAnchor( params[ "ANCHOR" ] == "ROOM" );
 
 	// Update position
 	if ( params.count( "X" ) && params.count( "Y" ) && params.count( "Z" ) )
