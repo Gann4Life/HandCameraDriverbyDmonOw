@@ -3,9 +3,11 @@ Synthetic MediaPipe world landmarks (metres) for tests: a flat right hand in
 the z = 0 plane, fingers pointing +y, each finger bent by a chosen angle at
 every joint, towards -z (the palm side).
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
+
+from hand_features import HandFeatures
 
 # Knuckle (MCP, or CMC for the thumb) positions, relative to the wrist at the origin
 _BASES = {
@@ -44,3 +46,11 @@ def make_hand(bend_deg: Optional[Dict[str, float]] = None) -> List[List[float]]:
             direction = np.cos(i * bend) * straight + np.sin(i * bend) * _PALM_SIDE
             pts[first + i] = pts[first + i - 1] + _BONE_M * direction
     return pts.tolist()
+
+
+def make_features(curl: Sequence[float] = (0.0,) * 5, pinch_distance: float = 1.0,
+                  index_tip_to_palm: float = 1.0) -> HandFeatures:
+    """HandFeatures from plain numbers, for code that only reads curls and pinch."""
+    return HandFeatures(curl=tuple(curl), curl_deg=(0.0,) * 5, splay_deg=(0.0,) * 4, pinch=(0.0,) * 4,
+                        pinch_distance=(pinch_distance, 1.0, 1.0, 1.0),
+                        index_tip_to_palm=index_tip_to_palm, palm_size_m=0.09)

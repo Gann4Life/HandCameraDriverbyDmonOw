@@ -1,10 +1,5 @@
 from gesture_scores import DEFAULTS, GESTURES, UNKNOWN, GestureClassifier, score_gestures
-from hand_features import HandFeatures
-
-
-def features(curl) -> HandFeatures:
-    return HandFeatures(curl=tuple(curl), curl_deg=(0.0,) * 5, splay_deg=(0.0,) * 4, pinch=(0.0,) * 4,
-                        pinch_distance=(1.0,) * 4, index_tip_to_palm=1.0, palm_size_m=0.09)
+from hands import make_features as features
 
 
 def scores(**named) -> dict:
@@ -46,6 +41,8 @@ def test_current_gesture_holds_until_another_clearly_wins():
     assert classify("left", scores(FIST=0.5, OPEN=0.6)) == "FIST"
     # FIST drops below gesture_exit
     assert classify("left", scores(FIST=0.3, OPEN=0.7)) == "OPEN"
+    # OPEN is still above gesture_exit, but FIST beats it by more than the margin
+    assert classify("left", scores(OPEN=0.45, FIST=0.9)) == "FIST"
 
 
 def test_nothing_scoring_enough_is_unknown():

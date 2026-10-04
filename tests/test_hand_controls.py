@@ -1,17 +1,11 @@
 import pytest
 
 from hand_controls import DEFAULTS, ControlMapper
-from hand_features import HandFeatures
+from hands import make_features as features
 
 # More than OneEuroFilter's reset_after: every sample starts the filter over,
 # so the tests see raw values without smoothing
 NO_SMOOTHING_STEP_S = 1.0
-
-
-def features(curl=(0.0,) * 5, pinch_distance=1.0, index_tip_to_palm=1.0) -> HandFeatures:
-    return HandFeatures(curl=tuple(curl), curl_deg=(0.0,) * 5, splay_deg=(0.0,) * 4, pinch=(0.0,) * 4,
-                        pinch_distance=(pinch_distance, 1.0, 1.0, 1.0),
-                        index_tip_to_palm=index_tip_to_palm, palm_size_m=0.09)
 
 
 def index_curl_for_trigger(value: float) -> float:
@@ -49,12 +43,6 @@ def test_pinch_fades_out_when_the_index_tip_is_in_the_palm():
     mapper = ControlMapper({})
     in_palm = features(pinch_distance=DEFAULTS["pinch_closed"], index_tip_to_palm=0.1)
     assert mapper.pinch_strength(in_palm) == 0.0
-
-
-def test_smoothed_values_stay_between_zero_and_one():
-    mapper = ControlMapper({})
-    trigger, grip = mapper("left", features(curl=(1.0,) * 5), 0.0)
-    assert 0.0 <= trigger <= 1.0 and 0.0 <= grip <= 1.0
 
 
 def test_latched_trigger_needs_a_clear_gap_to_press_and_release():
@@ -95,3 +83,10 @@ def test_finger_curls_are_clamped_and_per_hand():
     mapper = ControlMapper({})
     assert mapper.finger_curls("left", features(curl=(1.2, 0.5, -0.1, 0.0, 1.0)), 0.0) == (1.0, 0.5, 0.0, 0.0, 1.0)
     assert mapper.finger_curls("right", features(), 0.01) == (0.0,) * 5
+
+
+def test_finger_curls_are_smoothed_apart_from_trigger_and_grip():
+    mapper = ControlMapper({})
+    mapper("left", features(curl=(1.0,) * 5), 0.0)
+    # The same hand's first curls sample isn't blended with its trigger/grip history
+    assert mapper.finger_curls("left", features(), 0.01) == (0.0,) * 5

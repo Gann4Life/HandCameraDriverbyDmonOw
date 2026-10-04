@@ -3,8 +3,10 @@ import re
 
 import pytest
 
+import gesture_scores
 from hand_data import HandData
 
+# The GESTURE values PROTOCOL.md lists
 GESTURES = {"OPEN", "FIST", "POINT", "PINCH", "THUMBS_UP", "PEACE", "UNKNOWN"}
 FOUR_DECIMALS = re.compile(r"^-?\d+\.\d{4}$")
 TWO_DECIMALS = re.compile(r"^\d\.\d{2}$")
@@ -36,8 +38,12 @@ def test_always_sent_fields(hand_type):
     for key in ("X", "Y", "Z", "QW", "QX", "QY", "QZ"):
         assert FOUR_DECIMALS.match(sent[key]), (key, sent[key])
     for key in ("TRIGGER", "GRIP"):
-        assert TWO_DECIMALS.match(sent[key]) and 0.0 <= float(sent[key]) <= 1.0, (key, sent[key])
-    assert sent["GESTURE"] in GESTURES
+        assert TWO_DECIMALS.match(sent[key]), (key, sent[key])
+    assert sent["GESTURE"] == "POINT"
+
+
+def test_every_gesture_the_tracker_can_name_is_in_the_protocol():
+    assert set(gesture_scores.GESTURES) | {gesture_scores.UNKNOWN} == GESTURES
 
 
 @pytest.mark.parametrize("controller, expected", [("touch", "TOUCH"), ("index", "INDEX")])

@@ -117,7 +117,7 @@ Tests live in `tests/` (pytest). Install the dev requirements once with
 ## Workflow
 
 - Branches: `main` (releases), `dev` (pre-release). Every change gets its own branch from `dev`
-  (`feat/...`, `fix/...`, `docs/...`, `chore/...`) and merges back into `dev` with `--no-ff`. Only
+  (`feat/...`, `fix/...`, `docs/...`, `chore/...`, `test/...`, `refactor/...`) and merges back into `dev` with `--no-ff`. Only
   `dev` merges into `main`.
 - Conventional Commits.
 - Before merging into `dev`: tests pass, the code review and the docs update are done.

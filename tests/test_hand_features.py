@@ -78,12 +78,9 @@ def test_open_hand_has_no_pinch():
 
 
 def test_splay_is_the_angle_between_flat_fingers():
-    hand = make_hand()
-    features = compute_features(hand)
-    index_dir, middle_dir = np.array(hand[5]), np.array(hand[9])
-    expected = math.degrees(math.acos(np.dot(index_dir, middle_dir)
-                                      / (np.linalg.norm(index_dir) * np.linalg.norm(middle_dir))))
-    assert features.splay_deg[1] == pytest.approx(expected)
+    # make_hand's index knuckle sits 25 mm across and 90 mm up from the wrist, the middle one straight up
+    features = compute_features(make_hand())
+    assert features.splay_deg[1] == pytest.approx(math.degrees(math.atan(0.025 / 0.090)))
 
 
 def test_splay_is_unknown_for_a_finger_bent_out_of_the_palm():
