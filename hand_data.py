@@ -23,7 +23,7 @@ class HandData:
     """Encapsulates all data for a tracked hand."""
     
     hand_type: str  # "left" or "right"
-    position: Tuple[float, float, float]  # x, y, z in world coordinates
+    position: Tuple[float, float, float]  # metres from the headset, OpenVR axes (see docs/PROTOCOL.md)
     rotation: Tuple[float, float, float, float]  # qw, qx, qy, qz quaternion
     gesture: str  # Current gesture name
     trigger_value: float  # 0.0-1.0
