@@ -391,16 +391,13 @@ genuinely workable option. A phone is 3DoF at best and cannot give room-scale.
 
 ---
 
-## 9. Known security issue — unfixed
+## 9. Socket input — fixed
 
-The socket parser in `hand_tracking_listener.cpp` uses unvalidated `std::stof` on
-received tokens. Malformed input throws `std::invalid_argument`, which is uncaught and
-will terminate `vrserver.exe`. No authentication on the socket, though it binds to
-loopback so exposure is limited to the local machine.
-
-Any process running as your user can send arbitrary data to port 65432. Wrapping the
-parses in try/catch, or parsing with `std::from_chars`, would close this. Not addressed
-because the goal was getting tracking working first.
+The socket parser used unvalidated `std::stof` on received tokens, so malformed input
+threw an uncaught `std::invalid_argument` and could terminate `vrserver.exe`. It now
+parses with `std::from_chars` in `hand_message.cpp` and drops any malformed line (see
+docs/PROTOCOL.md). The socket still has no authentication; it binds to loopback, so
+only processes on the local machine can reach port 65432.
 
 ---
 

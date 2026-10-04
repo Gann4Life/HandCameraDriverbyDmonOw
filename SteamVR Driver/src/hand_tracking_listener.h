@@ -4,8 +4,6 @@
 #include <thread>
 #include <atomic>
 #include <string>
-#include <sstream>
-#include <map>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -23,6 +21,7 @@
 #endif
 
 #include "controller_device_driver.h"
+#include "hand_message.h"
 
 //-----------------------------------------------------------------------------
 // Purpose: Listens for hand tracking data from the Python script via socket
@@ -43,7 +42,6 @@ public:
 private:
 	void ListenThread();
 	void ProcessHandData( const std::string &data );
-	std::map<std::string, std::string> ParseProtocolString( const std::string &data );
 	// Where the headset looks now becomes the direction of a camera fixed in the room
 	void CaptureRoomForward();
 
@@ -53,6 +51,7 @@ private:
 	// -1 until the first message, then a ControllerProfile
 	std::atomic<int> requested_profile_{ -1 };
 	bool warned_profile_change_ = false;
+	bool warned_bad_line_ = false;
 	bool room_forward_set_ = false;
 
 	std::atomic<bool> is_running_;

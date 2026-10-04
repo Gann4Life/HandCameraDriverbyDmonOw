@@ -88,8 +88,9 @@ which trade-off was made and why.
 
 - `DriverMain.cpp` / `device_provider` register the devices; `controller_device_driver` owns one
   controller and is instantiated once per hand (same class, never a left and a right copy).
-- `hand_tracking_listener` owns the socket and line framing: it hands complete lines to the
-  controllers and never partial ones.
+- `hand_tracking_listener` owns the socket and applies messages to the controllers. Line framing
+  and parsing live in `hand_message` (no OpenVR, unit-tested): it hands over complete, validated
+  messages and never partial ones.
 - Input from the socket is untrusted: every field is validated and clamped; a malformed line is
   dropped, never crashes the driver or SteamVR.
 - No per-frame logging in release builds.
@@ -104,8 +105,10 @@ which trade-off was made and why.
 
 ## Testing
 
-Tests live in `tests/` (pytest). Install the dev requirements once with
+Python tests live in `tests/` (pytest). Install the dev requirements once with
 `python -m pip install -r requirements-dev.txt`, then run `python -m pytest -q` from the repo root.
+The driver's line parser has its own tests in `SteamVR Driver/src/tests/`, built with the driver
+(target `hand_message_tests`) and run with `ctest --test-dir "SteamVR Driver/src/build" -C Release`.
 
 - Every bug fix starts with a test that reproduces it. Every feature ships with its tests in the same
   change.
@@ -147,5 +150,5 @@ fixed.
 - The WiLoR depth experiment (`depth_assist.py`, `gui/environments.py`, its installer and add-on) is
   planned for removal.
 - Tests cover only part of the domain code so far (`hand_features`, `hand_controls`, `gesture_scores`,
-  `utils/one_euro`, `HandData.to_protocol_string`). There are no GUI smoke tests, recorded-clip tests
-  or driver tests yet.
+  `utils/one_euro`, `HandData.to_protocol_string`) and the driver's line parser. There are no GUI
+  smoke tests, recorded-clip tests or tests of the driver's pose logic yet.

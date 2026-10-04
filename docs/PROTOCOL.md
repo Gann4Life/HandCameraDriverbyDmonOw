@@ -6,7 +6,7 @@ sides and this document in the same commit.
 | Side | Writes / reads it |
 |---|---|
 | Tracker | `HandData.to_protocol_string` (`hand_data.py`), sent by `utils/socket_client.py`; `RECENTER` from `HandTracker.step` (`Camera.py`) |
-| Driver | `HandTrackingListener::ProcessHandData` (`SteamVR Driver/src/hand_tracking_listener.cpp`) |
+| Driver | `ParseHandMessage` and `LineSplitter` (`SteamVR Driver/src/hand_message.cpp`), applied by `HandTrackingListener::ProcessHandData` (`hand_tracking_listener.cpp`) |
 
 ## Transport
 
@@ -15,7 +15,8 @@ sides and this document in the same commit.
   port is fixed.
 - One client at a time. When it disconnects, the driver waits for the next one.
 - UTF-8 text, one message per line, ended by `\n`. TCP may split or join lines: the driver buffers
-  and only processes a line once its `\n` arrives. Empty lines are ignored.
+  and only processes a line once its `\n` arrives. Empty lines are ignored, and a trailing `\r` is
+  stripped. A line longer than 1024 bytes is dropped whole, up to its `\n`.
 - The tracker reconnects on its own (every `reconnect_interval`, off the tracking thread).
 
 ## Message: hand
@@ -30,6 +31,19 @@ Comma-separated `KEY:VALUE` pairs. Order doesn't matter to the driver; unknown k
 Apart from `HAND`, the driver applies whichever fields arrive: a missing field keeps that controller's
 previous value, and the line is not dropped.
 
+The driver validates the whole line before applying any of it, and drops the line (logging it once)
+when any field is malformed:
+
+- a number that isn't a plain decimal (empty, text, `nan`, `inf`, or out of float range);
+- part of a group: `X` without `Y` and `Z`, or some of `QW`..`QZ` without the rest;
+- a position coordinate beyond ±10 m, or a quaternion of length zero;
+- a `CURL` without exactly five values;
+- a `HAND` other than `LEFT` / `RIGHT`.
+
+Values that are well-formed but out of range are fixed instead: `TRIGGER`, `GRIP` and each `CURL`
+value are clamped to 0..1, and the quaternion is normalised. The tracker clamps `TRIGGER` and `GRIP`
+before sending too.
+
 | Key | Value | Sent | Meaning |
 |---|---|---|---|
 | `HAND` | `LEFT` / `RIGHT` | always | Which controller. Any other value drops the rest of the line |
@@ -38,7 +52,7 @@ previous value, and the line is not dropped.
 | `TRIGGER` | 0..1, 2 decimals | always | Analog trigger. Touch above 0.1; click with hysteresis 0.95 on / 0.85 off |
 | `GRIP` | 0..1, 2 decimals | always | Analog grip. Touch above 0.1; force above 0.7 |
 | `GESTURE` | `OPEN`, `FIST`, `POINT`, `PINCH`, `THUMBS_UP`, `PEACE`, `UNKNOWN` | always | Recognised gesture. **Parsed but ignored by the driver** |
-| `TYPE` | `TOUCH` / `INDEX` | when set; driver default `TOUCH` | Controller profile. Taken from the first line that isn't a recenter, even one dropped for a bad `HAND`; changing it needs a SteamVR restart |
+| `TYPE` | `TOUCH` / `INDEX` | when set; driver default `TOUCH` | Controller profile. Taken from the first valid line that isn't a recenter; changing it needs a SteamVR restart |
 | `CURL` | 5 floats 0..1, `;`-separated, thumb..pinky | when features exist | Finger curls for the Index skeleton |
 | `ANCHOR` | `ROOM` | when the camera is fixed | Camera fixed in the room: hands keep the room's forward instead of turning with the headset |
 
@@ -70,9 +84,6 @@ breaking change: it needs a `VERSION` key first, and both sides updated in the s
 
 ## Known gaps
 
-- The driver doesn't validate values: `std::stof` throws on a malformed number, and nothing catches
-  it on the listener thread, which can take SteamVR's server down. NaN, infinities and out-of-range
-  values aren't clamped either.
 - `GESTURE` reaches the driver but drives nothing (buttons and stick are held at rest).
 - The protocol has no version key.
 - The Index placement is corrected on both sides (see "Pose with `TYPE:INDEX`"); one side should own it.

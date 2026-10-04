@@ -147,30 +147,14 @@ void HandTrackingListener::ListenThread()
 		// Receive data. TCP is a stream: one recv can end in the middle of a line, so
 		// a line is only processed once its newline arrives.
 		char buffer[ 2048 ];
-		std::string pending;
+		LineSplitter lines;
 		while ( is_running_ )
 		{
 			int recv_size = recv( client_socket_, buffer, sizeof( buffer ), 0 );
 
 			if ( recv_size > 0 )
 			{
-				pending.append( buffer, recv_size );
-
-				size_t pos = 0;
-				while ( ( pos = pending.find( '\n' ) ) != std::string::npos )
-				{
-					std::string line = pending.substr( 0, pos );
-					if ( !line.empty() )
-					{
-						ProcessHandData( line );
-					}
-					pending.erase( 0, pos + 1 );
-				}
-				// A tracker that never sends a newline would grow this forever
-				if ( pending.size() > sizeof( buffer ) * 4 )
-				{
-					pending.clear();
-				}
+				lines.Feed( buffer, static_cast<size_t>( recv_size ), [ this ]( const std::string &line ) { ProcessHandData( line ); } );
 			}
 			else if ( recv_size == 0 )
 			{
@@ -198,18 +182,27 @@ void HandTrackingListener::ProcessHandData( const std::string &data )
 {
 	// Parse protocol string: HAND:LEFT,X:0.5,Y:0.3,Z:-0.2,QW:1.0,QX:0.0,QY:0.0,QZ:0.0,TRIGGER:0.8,GRIP:0.0,GESTURE:POINT,
 	// TYPE:INDEX,CURL:0.10;0.20;0.30;0.40;0.50,ANCHOR:ROOM (TYPE, CURL and ANCHOR are newer; older trackers
-	// leave them out)
-	std::map<std::string, std::string> params = ParseProtocolString( data );
+	// leave them out). A malformed line changes nothing.
+	const std::optional<HandMessage> message = ParseHandMessage( data );
+	if ( !message )
+	{
+		if ( !warned_bad_line_ )
+		{
+			warned_bad_line_ = true;
+			DriverLog( "HandTrackingListener: dropped a malformed line from the tracker (logged once)" );
+		}
+		return;
+	}
 
 	// RECENTER:1 on a line of its own: the user is facing the camera now
-	if ( params.count( "RECENTER" ) )
+	if ( message->recenter )
 	{
 		CaptureRoomForward();
 		return;
 	}
 
 	// The devices are added to SteamVR with the type the first message asks for
-	const int profile = static_cast<int>( params[ "TYPE" ] == "INDEX" ? ControllerProfile::Index : ControllerProfile::Touch );
+	const int profile = static_cast<int>( message->index_profile ? ControllerProfile::Index : ControllerProfile::Touch );
 	int expected = -1;
 	if ( !requested_profile_.compare_exchange_strong( expected, profile ) && expected != profile && !warned_profile_change_ )
 	{
@@ -217,26 +210,12 @@ void HandTrackingListener::ProcessHandData( const std::string &data )
 		DriverLog( "HandTrackingListener: the tracker asks for another controller type; restart SteamVR to switch" );
 	}
 
-	// Determine which hand this is for
-	MyControllerDeviceDriver *controller = nullptr;
-	if ( params[ "HAND" ] == "LEFT" )
-	{
-		controller = left_controller_;
-	}
-	else if ( params[ "HAND" ] == "RIGHT" )
-	{
-		controller = right_controller_;
-	}
-
-	if ( controller == nullptr )
-	{
-		return;
-	}
+	MyControllerDeviceDriver *controller = message->hand == HandSide::Left ? left_controller_ : right_controller_;
 
 	// A camera fixed in the room, or one that turns with the head (the default). Until the
 	// user recenters, the camera is taken to be where the headset looks when the first
 	// hand is seen: putting a hand in front of the camera usually means facing it.
-	const bool room = params[ "ANCHOR" ] == "ROOM";
+	const bool room = message->room_anchor;
 	if ( room && !room_forward_set_ )
 	{
 		CaptureRoomForward();
@@ -244,50 +223,27 @@ void HandTrackingListener::ProcessHandData( const std::string &data )
 	room_forward_set_ = room_forward_set_ && room;
 	controller->SetRoomAnchor( room );
 
-	// Update position
-	if ( params.count( "X" ) && params.count( "Y" ) && params.count( "Z" ) )
+	if ( message->position )
 	{
-		float x = std::stof( params[ "X" ] );
-		float y = std::stof( params[ "Y" ] );
-		float z = std::stof( params[ "Z" ] );
-		controller->UpdateHandPosition( x, y, z );
+		const auto &p = *message->position;
+		controller->UpdateHandPosition( p[ 0 ], p[ 1 ], p[ 2 ] );
 	}
-
-	// Update rotation
-	if ( params.count( "QW" ) && params.count( "QX" ) && params.count( "QY" ) && params.count( "QZ" ) )
+	if ( message->rotation )
 	{
-		float qw = std::stof( params[ "QW" ] );
-		float qx = std::stof( params[ "QX" ] );
-		float qy = std::stof( params[ "QY" ] );
-		float qz = std::stof( params[ "QZ" ] );
-		controller->UpdateHandRotation( qw, qx, qy, qz );
+		const auto &q = *message->rotation;
+		controller->UpdateHandRotation( q[ 0 ], q[ 1 ], q[ 2 ], q[ 3 ] );
 	}
-
-	// Update trigger
-	if ( params.count( "TRIGGER" ) )
+	if ( message->trigger )
 	{
-		float trigger = std::stof( params[ "TRIGGER" ] );
-		controller->UpdateTriggerValue( trigger );
+		controller->UpdateTriggerValue( *message->trigger );
 	}
-
-	// Update grip
-	if ( params.count( "GRIP" ) )
+	if ( message->grip )
 	{
-		float grip = std::stof( params[ "GRIP" ] );
-		controller->UpdateGripValue( grip );
+		controller->UpdateGripValue( *message->grip );
 	}
-
-	// Finger curls: thumb;index;middle;ring;pinky
-	if ( params.count( "CURL" ) )
+	if ( message->curls )
 	{
-		std::array<float, 5> curls{};
-		std::istringstream values( params[ "CURL" ] );
-		std::string value;
-		for ( size_t i = 0; i < curls.size() && std::getline( values, value, ';' ); i++ )
-		{
-			curls[ i ] = std::stof( value );
-		}
-		controller->UpdateFingerCurls( curls );
+		controller->UpdateFingerCurls( *message->curls );
 	}
 }
 
@@ -320,24 +276,4 @@ bool HandTrackingListener::RequestedProfile( ControllerProfile &profile ) const
 	}
 	profile = static_cast<ControllerProfile>( requested );
 	return true;
-}
-
-std::map<std::string, std::string> HandTrackingListener::ParseProtocolString( const std::string &data )
-{
-	std::map<std::string, std::string> params;
-	std::istringstream stream( data );
-	std::string token;
-
-	while ( std::getline( stream, token, ',' ) )
-	{
-		size_t colon_pos = token.find( ':' );
-		if ( colon_pos != std::string::npos )
-		{
-			std::string key = token.substr( 0, colon_pos );
-			std::string value = token.substr( colon_pos + 1 );
-			params[ key ] = value;
-		}
-	}
-
-	return params;
 }
