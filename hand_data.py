@@ -1,6 +1,7 @@
 """
 Data class for hand tracking information.
 """
+import math
 from typing import Dict, Tuple, List, Optional
 from dataclasses import dataclass, field
 
@@ -16,6 +17,11 @@ HAND_CONNECTIONS = (
     (9, 13), (13, 14), (14, 15), (15, 16),
     (13, 17), (0, 17), (17, 18), (18, 19), (19, 20),
 )
+
+
+def _unit(value: float) -> float:
+    """value clamped to 0..1, as the protocol defines trigger and grip; NaN becomes 0."""
+    return 0.0 if math.isnan(value) else min(1.0, max(0.0, value))
 
 
 @dataclass
@@ -54,8 +60,8 @@ class HandData:
             f"QX:{self.rotation[1]:.4f},"
             f"QY:{self.rotation[2]:.4f},"
             f"QZ:{self.rotation[3]:.4f},"
-            f"TRIGGER:{self.trigger_value:.2f},"
-            f"GRIP:{self.grip_value:.2f},"
+            f"TRIGGER:{_unit(self.trigger_value):.2f},"
+            f"GRIP:{_unit(self.grip_value):.2f},"
             f"GESTURE:{self.gesture},"
             f"TYPE:{controller_type.upper()}"
             f"{curls}"

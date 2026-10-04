@@ -18,6 +18,9 @@ What changed for users in each version. The format follows
   value near the game's threshold no longer grabs and drops. Off by default.
 
 ### Fixed
+- A malformed message to the SteamVR driver (a bad number, NaN, a huge value) could crash SteamVR.
+  The driver now checks every message and ignores broken ones; trigger, grip and finger values are
+  kept between 0 and 1.
 - Room-anchored hands kept following the head, and hand poses glitched now and then, when a message
   from the app reached the driver in two pieces.
 - Holding R started a new recenter countdown on every key repeat; now it starts one.

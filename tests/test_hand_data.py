@@ -62,6 +62,14 @@ def test_anchor_room_only_with_a_fixed_camera():
     assert fields(hand().to_protocol_string(room_anchor=True))["ANCHOR"] == "ROOM"
 
 
+@pytest.mark.parametrize("value, expected", [(1.7, "1.00"), (-0.4, "0.00"), (float("nan"), "0.00")])
+def test_trigger_and_grip_are_sent_between_zero_and_one(value, expected):
+    data = hand()
+    data.trigger_value = data.grip_value = value
+    sent = fields(data.to_protocol_string())
+    assert (sent["TRIGGER"], sent["GRIP"]) == (expected, expected)
+
+
 def test_one_line_without_the_terminator():
     # The socket client adds the "\n" that ends each message
     assert "\n" not in hand(curls=(0.1,) * 5).to_protocol_string("index", room_anchor=True)
