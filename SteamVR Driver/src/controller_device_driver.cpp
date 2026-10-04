@@ -57,14 +57,7 @@ MyControllerDeviceDriver::MyControllerDeviceDriver( vr::ETrackedControllerRole r
 		my_controller_serial_number_ = my_controller_role_ == vr::TrackedControllerRole_LeftHand ? "WebcamLeftHandABC123" : "WebcamRightHandXYZ789";
 	}
 
-	// Initialize hand tracking data with neutral values
-	hand_position_x_ = 0.0f;
-	hand_position_y_ = 0.0f;
-	hand_position_z_ = 0.0f;
-	hand_rotation_qw_ = 1.0f;  // Identity quaternion
-	hand_rotation_qx_ = 0.0f;
-	hand_rotation_qy_ = 0.0f;
-	hand_rotation_qz_ = 0.0f;
+	// Initialize hand tracking data with neutral values (hand_pose_ starts at the origin, identity)
 	trigger_value_ = 0.0f;
 	grip_value_ = 0.0f;
 	for ( auto &curl : finger_curls_ )
@@ -278,12 +271,11 @@ vr::DriverPose_t MyControllerDeviceDriver::GetPose()
 	// Get the orientation of the hmd from the 3x4 matrix GetRawTrackedDevicePoses returns
 	const vr::HmdQuaternion_t hmd_orientation = HmdQuaternion_FromMatrix( hmd_pose.mDeviceToAbsoluteTracking );
 
-	// Use hand tracking rotation if available, otherwise use default orientation
-	vr::HmdQuaternion_t hand_rotation;
-	hand_rotation.w = hand_rotation_qw_.load();
-	hand_rotation.x = hand_rotation_qx_.load();
-	hand_rotation.y = hand_rotation_qy_.load();
-	hand_rotation.z = hand_rotation_qz_.load();
+	HandPose hand;
+	{
+		std::lock_guard< std::mutex > lock( hand_pose_mutex_ );
+		hand = hand_pose_;
+	}
 
 	// The tracker gives the hand relative to the user's view of the camera. A camera on
 	// the head turns with it; a camera fixed in the room stays in the direction the
@@ -293,16 +285,9 @@ vr::DriverPose_t MyControllerDeviceDriver::GetPose()
 	const vr::HmdQuaternion_t room_frame = { std::cos( half_yaw ), 0.f, std::sin( half_yaw ), 0.f };
 	const vr::HmdQuaternion_t frame = room_anchor_.load() ? room_frame : hmd_orientation;
 
-	pose.qRotation = frame * hand_rotation;
+	pose.qRotation = frame * hand.rotation;
 
-	// Use hand tracking position if available
-	const vr::HmdVector3_t offset_position = {
-		hand_position_x_.load(),
-		hand_position_y_.load(),
-		hand_position_z_.load()
-	};
-
-	vr::HmdVector3_t position = hmd_position + ( offset_position * frame );
+	vr::HmdVector3_t position = hmd_position + ( hand.position * frame );
 
 	// The tracker places a Touch controller in the hand. An Index controller's
 	// origin sits elsewhere in the hand, so move it to where an Index would be
@@ -533,9 +518,8 @@ void MyControllerDeviceDriver::UpdateHandPosition( float x, float y, float z )
 			is_active_.load() ? 1 : 0 );
 	}
 
-	hand_position_x_.store( x );
-	hand_position_y_.store( y );
-	hand_position_z_.store( z );
+	std::lock_guard< std::mutex > lock( hand_pose_mutex_ );
+	hand_pose_.position = { x, y, z };
 }
 
 //-----------------------------------------------------------------------------
@@ -543,10 +527,8 @@ void MyControllerDeviceDriver::UpdateHandPosition( float x, float y, float z )
 //-----------------------------------------------------------------------------
 void MyControllerDeviceDriver::UpdateHandRotation( float qw, float qx, float qy, float qz )
 {
-	hand_rotation_qw_.store( qw );
-	hand_rotation_qx_.store( qx );
-	hand_rotation_qy_.store( qy );
-	hand_rotation_qz_.store( qz );
+	std::lock_guard< std::mutex > lock( hand_pose_mutex_ );
+	hand_pose_.rotation = { qw, qx, qy, qz };
 }
 
 //-----------------------------------------------------------------------------

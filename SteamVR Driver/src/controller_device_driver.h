@@ -6,6 +6,7 @@
 
 #include "openvr_driver.h"
 #include <atomic>
+#include <mutex>
 #include <thread>
 
 // Which real controller the device presents itself as, so that games use the
@@ -132,14 +133,16 @@ private:
 	std::atomic< bool > is_active_;
 	std::thread my_pose_update_thread_;
 
-	// Hand tracking data
-	std::atomic< float > hand_position_x_;
-	std::atomic< float > hand_position_y_;
-	std::atomic< float > hand_position_z_;
-	std::atomic< float > hand_rotation_qw_;
-	std::atomic< float > hand_rotation_qx_;
-	std::atomic< float > hand_rotation_qy_;
-	std::atomic< float > hand_rotation_qz_;
+	// Hand tracking data. The pose is written by the listener thread and read by the
+	// pose thread: one lock for all of it, so a read never mixes two updates into a
+	// quaternion that isn't unit length.
+	struct HandPose
+	{
+		vr::HmdVector3_t position{ 0.f, 0.f, 0.f };
+		vr::HmdQuaternion_t rotation{ 1.f, 0.f, 0.f, 0.f };
+	};
+	HandPose hand_pose_;
+	mutable std::mutex hand_pose_mutex_;
 	std::atomic< float > trigger_value_;
 	std::atomic< float > grip_value_;
 	std::array< std::atomic< float >, 5 > finger_curls_;

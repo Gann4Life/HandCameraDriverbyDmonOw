@@ -65,6 +65,7 @@ add_library(driver_${DRIVER_NAME} SHARED
 	device_provider.cpp
 	controller_device_driver.cpp
 	hand_tracking_listener.cpp
+	tracker_server.cpp
 	hand_message.cpp
 	"${OPENVR_DIR}/samples/drivers/utils/driverlog/driverlog.cpp"
 	# Valve's sample that turns finger curls into a hand skeleton (Index profile)
@@ -96,8 +97,11 @@ foreach(_config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
 	)
 endforeach()
 
-# Unit tests for the line parser: no OpenVR, no SteamVR. Run with ctest.
+# Unit tests for the line parser and the tracker's socket: no OpenVR, no SteamVR. Run with ctest.
 enable_testing()
 add_executable(hand_message_tests tests/hand_message_tests.cpp hand_message.cpp)
 target_include_directories(hand_message_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME hand_message_tests COMMAND hand_message_tests)
+add_executable(tracker_server_tests tests/tracker_server_tests.cpp tracker_server.cpp hand_message.cpp)
+target_include_directories(tracker_server_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME tracker_server_tests COMMAND tracker_server_tests)

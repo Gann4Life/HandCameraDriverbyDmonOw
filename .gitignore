@@ -84,3 +84,6 @@ TODO.md
 *.temp
 .cache/
 tmp/
+# Local planning notes, never versioned
+PLAN.md
+TODO.md

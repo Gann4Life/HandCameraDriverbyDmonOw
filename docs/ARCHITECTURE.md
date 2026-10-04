@@ -25,7 +25,7 @@ camera ─► CameraCapture ─► MediaPipe ─► HandIdentityTracker ─► h
                           HandData.to_protocol_string ◄────────────────────┘
                                    │ socket
                                    ▼
-                     hand_tracking_listener ─► controller_device_driver ─► SteamVR
+              tracker_server ─► hand_tracking_listener ─► controller_device_driver ─► SteamVR
 ```
 
 ## Python layers
@@ -88,9 +88,20 @@ which trade-off was made and why.
 
 - `DriverMain.cpp` / `device_provider` register the devices; `controller_device_driver` owns one
   controller and is instantiated once per hand (same class, never a left and a right copy).
-- `hand_tracking_listener` owns the socket and applies messages to the controllers. Line framing
-  and parsing live in `hand_message` (no OpenVR, unit-tested): it hands over complete, validated
-  messages and never partial ones.
+- `tracker_server` owns the socket (no OpenVR, tested with real sockets). It polls with `poll`
+  (`WSAPoll` on Windows) instead of blocking, so `Stop` never closes a socket under the thread. Only its thread touches the
+  client socket. An accept error doesn't end listening, and an exception while serving a connection
+  closes that connection and the server keeps listening. On Windows it binds with
+  `SO_EXCLUSIVEADDRUSE`, so no other process can share the port. It serves a connection only after
+  the tracker's greeting and closes one that doesn't greet within 1 s, doesn't open with the
+  greeting, has another protocol version, or sends no complete line for 5 s after the greeting
+  (the tracker's keepalive repeats the greeting, which the server ignores). Per-connection log lines
+  are limited to one a second and each refusal reason is logged once (see PROTOCOL.md).
+- `hand_tracking_listener` only applies messages to the controllers. Line framing and parsing live
+  in `hand_message` (no OpenVR, unit-tested): it hands over complete, validated messages and never
+  partial ones.
+- A controller's pose is stored as one struct under a mutex, so the position and rotation are never
+  read torn.
 - Input from the socket is untrusted: every field is validated and clamped; a malformed line is
   dropped, never crashes the driver or SteamVR.
 - No per-frame logging in release builds.
@@ -107,8 +118,9 @@ which trade-off was made and why.
 
 Python tests live in `tests/` (pytest). Install the dev requirements once with
 `python -m pip install -r requirements-dev.txt`, then run `python -m pytest -q` from the repo root.
-The driver's line parser has its own tests in `SteamVR Driver/src/tests/`, built with the driver
-(target `hand_message_tests`) and run with `ctest --test-dir "SteamVR Driver/src/build" -C Release`.
+The driver has its own tests in `SteamVR Driver/src/tests/`, built with the driver: the line parser
+and greeting (`hand_message_tests`) and the socket server (`tracker_server_tests`, real sockets).
+Run both with `ctest --test-dir "SteamVR Driver/src/build" -C Release`.
 
 - Every bug fix starts with a test that reproduces it. Every feature ships with its tests in the same
   change.
@@ -150,5 +162,6 @@ fixed.
 - The WiLoR depth experiment (`depth_assist.py`, `gui/environments.py`, its installer and add-on) is
   planned for removal.
 - Tests cover only part of the domain code so far (`hand_features`, `hand_controls`, `gesture_scores`,
-  `utils/one_euro`, `HandData.to_protocol_string`) and the driver's line parser. There are no GUI
-  smoke tests, recorded-clip tests or tests of the driver's pose logic yet.
+  `utils/one_euro`, `HandData.to_protocol_string`, `utils/socket_client`) and the driver's line
+  parser and socket server. There are no GUI smoke tests, recorded-clip tests or tests of the
+  driver's pose logic yet.

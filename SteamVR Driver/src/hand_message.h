@@ -36,6 +36,14 @@ constexpr float kMaxPositionM = 10.f;
 // Longest line accepted; a real hand line is under 200 bytes
 constexpr size_t kMaxLineBytes = 1024;
 
+// The protocol version this driver speaks. The tracker states its own in the
+// greeting; a connection with another version is refused.
+constexpr int kProtocolVersion = 1;
+
+// The VERSION of the tracker's greeting, HELLO:HANDCAM,VERSION:<n>[,...], its
+// first line on every connection; nothing when the line is not a greeting.
+std::optional< int > ParseGreeting( std::string_view line );
+
 // The message in one line (without its newline), or nothing when the line is
 // malformed: a bad number, NaN or infinity, an incomplete X/Y/Z or QW..QZ group,
 // a position out of range, a zero quaternion, a CURL without exactly 5 values,
