@@ -1,0 +1,87 @@
+# Changelog
+
+What changed for users in each version. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [Unreleased]
+
+### Added
+- **Hands follow** setting (View): with a camera in front of you, choose *The room* and your hands
+  keep their place while you look around, instead of turning with your head. They still move with
+  you when you walk, and turn with your game's snap turn.
+- **Recenter hands** (toolbar or R): after a 3 s countdown to face the camera, the room-anchored
+  hands are turned to match where the camera is. Only the heading counts, so a tilted head doesn't
+  tilt the hands.
+- **Calibrate gestures** (toolbar): records your open hand and your fist and fits each finger's
+  curl range to the active preset's view.
+- **Steady grip** and **Steady trigger** (Gestures): grabbing and letting go need a clear gap, so a
+  value near the game's threshold no longer grabs and drops. Off by default.
+
+### Fixed
+- Room-anchored hands kept following the head, and hand poses glitched now and then, when a message
+  from the app reached the driver in two pieces.
+- Holding R started a new recenter countdown on every key repeat; now it starts one.
+
+## [1.4] - 2026-10-03
+
+### Added
+- **Rebuild hands in 3D** (Depth): fits a real hand model to the 2D points MediaPipe tracks well,
+  so hands seen from behind (POV) turn suddenly much less often, keep a steadier distance, and
+  fists are recognised. On in the POV preset.
+- New built-in preset **POV Pointer**: POV with the hands turned for pointing.
+
+### Changed
+- **Facing** is the default preset. POV is retuned for the rebuilt hands (hand rotation, smoothing,
+  hands slightly higher) and is still marked experimental.
+- Presets you changed yourself are kept when you update.
+- Settings added in a new version start with your active preset's value, so updating doesn't show
+  "unsaved changes".
+
+## [1.3] - 2026-10-02
+
+### Added
+- **Desktop app**: one window with the camera preview, a 3D view of where each hand is placed, a
+  live readout of every finger, trigger and grip, and all settings. Most settings apply instantly.
+- **Add-ons window**: checks the SteamVR driver at start and installs, updates or turns it back on
+  with one button. The optional WiLoR depth installs from the same window.
+- **Valve Index controllers** (optional, *Show hands as* → Index): games that support Index finger
+  tracking show each of your fingers. Touch stays the default.
+- **Presets per camera position**: POV (camera on your head or chest) and Facing (camera in front
+  of you) are built in, and you can make your own.
+- **Steady hand size** for steadier depth with a head or chest camera.
+
+### Changed
+- Trigger and grip are analog, from how far your fingers curl and pinch, instead of on/off
+  gestures. Gesture detection is steadier.
+
+### Fixed
+- Left and right hands are correct with mirrored cameras.
+
+### Removed
+- The install scripts: the app installs the driver itself.
+
+## [1.2] - 2026-10-02
+
+### Added
+- Optional **3D depth** (experimental, NVIDIA GPU): much steadier hand distance using the WiLoR hand
+  model. It isn't bundled; an installer downloads it from the official sources. Personal,
+  non-commercial use only, because of its licenses.
+
+## [1.1] - 2026-10-02
+
+### Fixed
+- The tracker froze for about 2 seconds every few seconds when it couldn't reach the SteamVR driver.
+  It now retries the connection in the background.
+
+## [1.0] - 2026-10-02
+
+### Added
+- First ready-to-run Windows build: the SteamVR driver and the hand tracker, no Python or compiler
+  needed.
+
+[Unreleased]: https://github.com/Gann4Life/HandCameraDriverbyDmonOw/compare/v1.4...HEAD
+[1.4]: https://github.com/Gann4Life/HandCameraDriverbyDmonOw/compare/v1.3...v1.4
+[1.3]: https://github.com/Gann4Life/HandCameraDriverbyDmonOw/compare/v1.2...v1.3
+[1.2]: https://github.com/Gann4Life/HandCameraDriverbyDmonOw/compare/v1.1...v1.2
+[1.1]: https://github.com/Gann4Life/HandCameraDriverbyDmonOw/compare/v1.0...v1.1
+[1.0]: https://github.com/Gann4Life/HandCameraDriverbyDmonOw/releases/tag/v1.0
