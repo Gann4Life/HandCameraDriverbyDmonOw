@@ -30,12 +30,21 @@ class HandData:
     grip_value: float  # 0.0-1.0
     landmarks: List[Tuple[float, float, float]]  # 21 hand landmarks
     is_detected: bool = True
-    
-    def to_protocol_string(self) -> str:
+    finger_curls: Tuple[float, ...] = ()  # thumb..pinky, 0 straight .. 1 curled; empty without features
+
+    def to_protocol_string(self, controller_type: str = "touch", room_anchor: bool = False) -> str:
         """
         Convert hand data to protocol string for socket transmission.
-        Format: HAND:LEFT,X:0.5,Y:0.3,Z:-0.2,QW:1.0,QX:0.0,QY:0.0,QZ:0.0,TRIGGER:0.8,GRIP:0.0,GESTURE:POINT
+        Format: HAND:LEFT,X:0.5,Y:0.3,Z:-0.2,QW:1.0,QX:0.0,QY:0.0,QZ:0.0,TRIGGER:0.8,GRIP:0.0,GESTURE:POINT,
+        TYPE:INDEX,CURL:0.10;0.20;0.30;0.40;0.50,ANCHOR:ROOM
+
+        Args:
+            controller_type: What the driver presents the hands as, "touch" or "index"
+            room_anchor: The camera is fixed in the room: the driver places the hands
+                facing the tracking space's forward instead of turning them with the headset
         """
+        curls = f",CURL:{';'.join(f'{c:.2f}' for c in self.finger_curls)}" if self.finger_curls else ""
+        anchor = ",ANCHOR:ROOM" if room_anchor else ""
         return (
             f"HAND:{self.hand_type.upper()},"
             f"X:{self.position[0]:.4f},"
@@ -47,7 +56,10 @@ class HandData:
             f"QZ:{self.rotation[3]:.4f},"
             f"TRIGGER:{self.trigger_value:.2f},"
             f"GRIP:{self.grip_value:.2f},"
-            f"GESTURE:{self.gesture}"
+            f"GESTURE:{self.gesture},"
+            f"TYPE:{controller_type.upper()}"
+            f"{curls}"
+            f"{anchor}"
         )
     
     @staticmethod

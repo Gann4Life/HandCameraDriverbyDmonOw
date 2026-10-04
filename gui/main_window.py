@@ -1,17 +1,24 @@
 """
 Main window: camera and 3D previews on the left, settings / live readout / log
 on the right, tracking controls in the toolbar and health in the status bar.
+
+Settings come in two kinds, on two tabs. Preset settings depend on where the
+camera is; changes to them stay unsaved until Save preset. App settings
+(camera device, tracking model, depth, driver connection...) are the same for
+every preset and are saved as soon as they change.
 """
-import copy
 import json
-from typing import Optional
+from pathlib import Path
+from typing import Dict, Optional
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QSplitter, QTabWidget, QVBoxLayout, QWidget
 
+import addons
 import presets
 from Camera import HandTracker
+from gui.addons_dialog import AddonsDialog
 from gui.camera_view import CameraView
 from gui.environments import relaunch, wilor_installed_here, wilor_launcher
 from gui.gesture_calibration import GestureCalibrationDialog
@@ -20,14 +27,20 @@ from gui.live_panel import LivePanel
 from gui.log_panel import LogPanel, capture_output
 from gui.preset_bar import PresetBar
 from gui.settings_panel import SettingsPanel
-from gui.settings_schema import SETTINGS
+from gui.settings_schema import SETTINGS, Setting
 from gui.style import MUTED_COLOR, OK_COLOR, WARNING_COLOR
 from gui.tracker_worker import TrackerWorker
 from hand_data import TrackingFrame
 from utils.config_utils import get_value, set_value
+from version import APP_VERSION
 
 APP_TITLE = "Hand Camera Driver"
 REFRESH_MS = 16  # preview refresh, independent of the tracking rate
+RECENTER_DELAY_S = 3
+
+
+def _shared(setting: Setting) -> bool:
+    return not any(presets.is_preset_key(key) for key in setting.config_keys)
 
 
 class MainWindow(QMainWindow):
@@ -35,25 +48,33 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config_path = config_path
         self.config = HandTracker.load_config(config_path)
-        self.saved_config = copy.deepcopy(self.config)
         self.worker: Optional[TrackerWorker] = None
         self._shown_sequence = -1
+        self.steamvr: Optional[Path] = None  # picked by hand in Add-ons when it can't be found
+        self.driver_missing = False
 
         self.log_panel = LogPanel()
         capture_output(self.log_panel)
 
         self.camera_view = CameraView()
         self.hand_view = HandView3D()
-        self.settings_panel = SettingsPanel(self.config, SETTINGS)
-        self.settings_panel.changed.connect(self._on_settings_changed)
-        self.preset_bar = PresetBar(self.config, self.save_config)
+        self.preset_panel = SettingsPanel(
+            self.config, [s for s in SETTINGS if not _shared(s)],
+            header="These settings belong to the preset, so each camera position keeps its own. "
+                   "Changes apply live; Save preset keeps them.")
+        self.app_panel = SettingsPanel(
+            self.config, [s for s in SETTINGS if _shared(s)],
+            header="These settings are the same for every preset. Changes are saved automatically.")
+        for panel in (self.preset_panel, self.app_panel):
+            panel.changed.connect(self._on_settings_changed)
+        self.preset_bar = PresetBar(self.config, self.write_config)
         self.preset_bar.switched.connect(self._on_preset_switched)
         self.preset_bar.edited.connect(self._update_title)
-        settings_tab = QWidget()
-        settings_layout = QVBoxLayout(settings_tab)
-        settings_layout.setContentsMargins(0, 4, 0, 0)
-        settings_layout.addWidget(self.preset_bar)
-        settings_layout.addWidget(self.settings_panel, 1)
+        preset_tab = QWidget()
+        preset_layout = QVBoxLayout(preset_tab)
+        preset_layout.setContentsMargins(0, 4, 0, 0)
+        preset_layout.addWidget(self.preset_bar)
+        preset_layout.addWidget(self.preset_panel, 1)
         self.live_panel = LivePanel()
 
         previews = QSplitter(Qt.Vertical)
@@ -61,7 +82,8 @@ class MainWindow(QMainWindow):
         previews.addWidget(self.hand_view)
         previews.setSizes([460, 340])
         tabs = QTabWidget()
-        tabs.addTab(settings_tab, "Settings")
+        tabs.addTab(preset_tab, "Preset")
+        tabs.addTab(self.app_panel, "App settings")
         tabs.addTab(self.live_panel, "Hands")
         tabs.addTab(self.log_panel, "Log")
         main = QSplitter(Qt.Horizontal)
@@ -81,6 +103,7 @@ class MainWindow(QMainWindow):
         self._timer.timeout.connect(self._refresh)
         self._timer.start(REFRESH_MS)
         self.start_tracking()
+        QTimer.singleShot(300, self._check_addons_at_startup)
 
     # ----- toolbar and menus
 
@@ -95,30 +118,43 @@ class MainWindow(QMainWindow):
         swap_action = QAction("Swap hands", self)
         swap_action.setShortcut(QKeySequence("S"))
         swap_action.setToolTip("Left and right are the wrong way round (S)")
-        swap_action.triggered.connect(lambda: self.settings_panel.set_value(
+        swap_action.triggered.connect(lambda: self.set_setting(
             "tracking.swap_hands", not get_value(self.config, "tracking.swap_hands", False)))
         self.depth_action = QAction("WiLoR depth", self)
         self.depth_action.setCheckable(True)
         self.depth_action.setToolTip("Heavy 3D hand model for steadier depth (experimental)")
-        self.depth_action.triggered.connect(lambda checked: self.settings_panel.set_value(
+        self.depth_action.triggered.connect(lambda checked: self.set_setting(
             "tracking.depth_source", "wilor" if checked else "mediapipe"))
         self.calibrate_action = QAction("Calibrate gestures", self)
         self.calibrate_action.setToolTip("Measure your open hand and fist from where the camera is, "
                                          "for steadier trigger and grip")
         self.calibrate_action.triggered.connect(self._calibrate_gestures)
-        save_action = QAction("Save", self)
+        recenter_action = QAction("Recenter hands", self)
+        recenter_action.setShortcut(QKeySequence("R"))
+        recenter_action.setToolTip(f"With Hands follow: The room. In {RECENTER_DELAY_S} seconds, the direction "
+                                   "your headset faces becomes where the camera is: face it (R)")
+        recenter_action.triggered.connect(lambda: self._recenter_countdown(RECENTER_DELAY_S))
+        addons_action = QAction("Add-ons", self)
+        addons_action.setToolTip("Install or update the SteamVR driver and WiLoR depth")
+        addons_action.triggered.connect(lambda: self.show_addons())
+        save_action = QAction("Save preset", self)
         save_action.setShortcut(QKeySequence.Save)
-        save_action.triggered.connect(self.save_config)
-        revert_action = QAction("Revert", self)
-        revert_action.setToolTip("Discard changes since the last save")
-        revert_action.triggered.connect(self.revert_config)
+        save_action.triggered.connect(self.preset_bar.save)
+        discard_action = QAction("Discard preset changes", self)
+        discard_action.triggered.connect(self.preset_bar.discard)
 
-        for action in (self.start_action, swap_action, self.depth_action, self.calibrate_action):
+        for action in (self.start_action, swap_action, recenter_action, self.depth_action, self.calibrate_action):
             toolbar.addAction(action)
         toolbar.addSeparator()
-        toolbar.addAction(save_action)
-        toolbar.addAction(revert_action)
+        toolbar.addAction(addons_action)
 
+        file_menu = self.menuBar().addMenu("File")
+        file_menu.addAction(save_action)
+        file_menu.addAction(discard_action)
+        file_menu.addSeparator()
+        file_menu.addAction(addons_action)
+        file_menu.addSeparator()
+        file_menu.addAction("Quit", self.close)
         view_menu = self.menuBar().addMenu("View")
         for text, widget in (("Camera view", self.camera_view), ("3D view", self.hand_view)):
             action = QAction(text, self, checkable=True, checked=True)
@@ -127,11 +163,27 @@ class MainWindow(QMainWindow):
         landmarks = QAction("Hand skeleton on camera", self, checkable=True, checked=True)
         landmarks.toggled.connect(self._set_show_landmarks)
         view_menu.addAction(landmarks)
-        file_menu = self.menuBar().addMenu("File")
-        file_menu.addAction(save_action)
-        file_menu.addAction(revert_action)
-        file_menu.addSeparator()
-        file_menu.addAction("Quit", self.close)
+
+    def _recenter_countdown(self, seconds: int):
+        """Leave time to put the headset on and face the camera, then recenter."""
+        if self.worker is None:
+            self.statusBar().showMessage("Start tracking first.", 3000)
+            return
+        if seconds > 0:
+            self.statusBar().showMessage(f"Face the camera with your headset: recentering in {seconds}...")
+            QTimer.singleShot(1000, lambda: self._recenter_countdown(seconds - 1))
+            return
+        self.worker.recenter()
+        self.statusBar().showMessage("Hands recentered on the camera.", 3000)
+
+    def set_setting(self, key: str, value):
+        """Change a setting as if edited in its panel, e.g. from a toolbar button."""
+        panel = self.preset_panel if self.preset_panel.has(key) else self.app_panel
+        panel.set_value(key, value)
+
+    def _refresh_panels(self):
+        self.preset_panel.refresh()
+        self.app_panel.refresh()
 
     def _set_show_landmarks(self, show: bool):
         self.camera_view.show_landmarks = show
@@ -206,14 +258,19 @@ class MainWindow(QMainWindow):
         if changes.get("tracking.depth_source") == "wilor" and not wilor_installed_here():
             self._switch_to_wilor_environment()
             return
-        self.preset_bar.refresh()
-        self._update_title()
-        self._sync_depth_action()
+        self._settings_took_effect(changes)
         if self.worker is not None:
             self.worker.apply_settings(changes)
 
+    def _settings_took_effect(self, changes: dict):
+        if any(not presets.is_preset_key(key) for key in changes):
+            self.write_config()
+        self.preset_bar.refresh()
+        self._update_title()
+        self._sync_depth_action()
+
     def _on_preset_switched(self, changes: dict):
-        self.settings_panel.refresh()
+        self._refresh_panels()
         self._update_title()
         if changes and self.worker is not None:
             self.worker.apply_settings(changes)
@@ -226,10 +283,8 @@ class MainWindow(QMainWindow):
             return
         for key, value in rejected.items():
             set_value(self.config, key, value)
-        self.settings_panel.refresh()
-        self.preset_bar.refresh()
-        self._sync_depth_action()
-        self._update_title()
+        self._refresh_panels()
+        self._settings_took_effect(rejected)
         if "tracking.depth_source" in rejected:
             QMessageBox.information(self, "WiLoR depth", "WiLoR could not be loaded, so standard depth stays on. "
                                                          "The Log tab has the details.")
@@ -237,28 +292,64 @@ class MainWindow(QMainWindow):
     def _switch_to_wilor_environment(self):
         """
         WiLoR was asked for but isn't installed in this environment: restart the
-        app in the one where it is, or explain how to install it.
+        app in the one where it is, or offer to install it.
         """
         set_value(self.config, "tracking.depth_source", "mediapipe")
-        self.settings_panel.refresh()
+        self._refresh_panels()
         self._sync_depth_action()
         self._update_title()
         launcher = wilor_launcher()
         if launcher is None:
-            QMessageBox.information(self, "WiLoR depth", "WiLoR is not installed. Run install-depth.bat (release "
-                                                         "package) or see INSTALL.md section 10, then try again.")
+            self.show_addons("WiLoR depth isn't installed yet. Install it below, then turn it on again.")
             return
-        answer = QMessageBox.question(self, "WiLoR depth",
-                                      "WiLoR is installed in its own environment. Restart the app there with "
-                                      "WiLoR depth on?\n\nYour settings are saved first.")
+        modified = presets.is_modified(self.config)
+        answer = QMessageBox.question(
+            self, "WiLoR depth", "WiLoR is installed in its own environment. Restart the app there with WiLoR "
+                                 "depth on?" + (f"\n\nYour changes to the preset {presets.active(self.config)} "
+                                                "are saved first." if modified else ""))
         if answer != QMessageBox.Yes:
             return
         set_value(self.config, "tracking.depth_source", "wilor")
-        if not self.save_config():
+        if modified:
+            presets.store(self.config)
+        if not self.write_config():
             return
         self.stop_tracking(wait=True)
         relaunch(*launcher, self.config_path)
         self.close()
+
+    # ----- add-ons
+
+    def show_addons(self, reason: str = ""):
+        dialog = AddonsDialog(self.config, self.write_config, self.steamvr, reason, self)
+        dialog.depth_installed.connect(self._offer_wilor)
+        dialog.exec()
+        self.steamvr = dialog.steamvr
+        self.driver_missing = dialog.driver.state == "missing"
+
+    def _offer_wilor(self):
+        answer = QMessageBox.question(self, "WiLoR depth", "WiLoR depth is installed. Turn it on now? The app "
+                                                           "restarts to load it.")
+        if answer == QMessageBox.Yes:
+            # After the add-ons window closes, so the restart doesn't happen under it
+            QTimer.singleShot(0, lambda: self.set_setting("tracking.depth_source", "wilor"))
+
+    def _check_addons_at_startup(self):
+        try:
+            status = addons.driver_status()
+        except Exception as e:  # never keep the app from starting
+            print(f"Could not check the SteamVR driver: {e}")
+            return
+        self.driver_missing = status.state == "missing"
+        if not (get_value(self.config, "addons.check_at_startup", True) and status.needs_attention):
+            return
+        reasons = {
+            "missing": "The SteamVR driver isn't installed yet, so your hands won't show up in SteamVR.",
+            "outdated": "This app brings a newer SteamVR driver than the one installed. Update it so both "
+                        "match.",
+        }
+        reason = reasons.get(status.state, "SteamVR turned the driver off. Turn it back on below.")
+        self.show_addons(reason)
 
     def _sync_depth_action(self):
         self.depth_action.setChecked(get_value(self.config, "tracking.depth_source") == "wilor")
@@ -283,6 +374,8 @@ class MainWindow(QMainWindow):
         self.latency_label.setText(f"{latency:.0f} ms per frame")
         if frame.driver_connected:
             self._set_label(self.driver_label, "SteamVR driver connected", OK_COLOR)
+        elif self.driver_missing:
+            self._set_label(self.driver_label, "SteamVR driver not installed (see Add-ons)", WARNING_COLOR)
         else:
             self._set_label(self.driver_label, "Waiting for SteamVR driver", WARNING_COLOR)
         wilor = frame.depth_label != "MediaPipe"
@@ -295,47 +388,30 @@ class MainWindow(QMainWindow):
 
     # ----- config file
 
-    @property
-    def dirty(self) -> bool:
-        return self.config != self.saved_config
-
     def _update_title(self):
-        self.setWindowTitle(f"{APP_TITLE} - {presets.active(self.config)}{' *' if self.dirty else ''}")
+        modified = " (unsaved changes)" if presets.is_modified(self.config) else ""
+        self.setWindowTitle(f"{APP_TITLE} {APP_VERSION} - preset {presets.active(self.config)}{modified}")
 
-    def save_config(self) -> bool:
-        """Write the config file, keeping the settings in use in the active preset."""
-        presets.store(self.config)
+    def write_config(self) -> bool:
+        """
+        Write the config file: the app settings in use, and the presets as saved.
+        Unsaved changes to the active preset stay out until Save preset.
+        """
         try:
             with open(self.config_path, "w") as f:
-                json.dump(self.config, f, indent=2)
+                json.dump(presets.without_unsaved(self.config), f, indent=2)
                 f.write("\n")
         except OSError as e:
             QMessageBox.critical(self, "Save", f"Could not save {self.config_path}:\n{e}")
             return False
-        self.saved_config = copy.deepcopy(self.config)
-        self.preset_bar.refresh()
-        self._update_title()
-        self.statusBar().showMessage(f"Saved {self.config_path} (preset {presets.active(self.config)})", 3000)
         return True
 
-    def revert_config(self):
-        if not self.dirty:
-            return
-        self.config.clear()
-        self.config.update(copy.deepcopy(self.saved_config))
-        self.settings_panel.refresh()
-        self.preset_bar.refresh()
-        self._update_title()
-        if self.worker is not None:
-            # Simplest way to apply everything at once: restart with the saved settings
-            self.stop_tracking(wait=True)
-            QTimer.singleShot(0, self.start_tracking)
-
     def closeEvent(self, event):
-        if self.dirty:
-            answer = QMessageBox.question(self, APP_TITLE, "Save your changes before closing?",
+        if presets.is_modified(self.config):
+            answer = QMessageBox.question(self, APP_TITLE,
+                                          f"Save your changes to the preset {presets.active(self.config)}?",
                                           QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
-            if answer == QMessageBox.Cancel or (answer == QMessageBox.Save and not self.save_config()):
+            if answer == QMessageBox.Cancel or (answer == QMessageBox.Save and not self.preset_bar.save()):
                 event.ignore()
                 return
         self._timer.stop()

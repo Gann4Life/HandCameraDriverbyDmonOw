@@ -16,6 +16,7 @@ class Apply(Enum):
     MODEL = "reloads the hand model"
     NEXT_START = "next start"
     RECONNECT = "reconnects to the driver"
+    STEAMVR = "restart SteamVR"
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,7 @@ WILOR_WARNING = (
     "WiLoR runs a large 3D hand model on the GPU next to your VR game.\n\n"
     "• High GPU load and several GB of video memory: the game may lose frame rate.\n"
     "• About 200 ms of extra lag on depth.\n"
-    "• NVIDIA GPU only, and a separate install (install-depth.bat, about 3 GB).\n"
+    "• NVIDIA GPU only, and a separate install from Add-ons (about 3 GB).\n"
     "• Personal, non-commercial use only (WiLoR CC BY-NC-ND, MANO, Ultralytics AGPL).\n\n"
     "Turn it on?"
 )
@@ -87,10 +88,18 @@ SETTINGS = (
 
     # View
     Setting("tracking.view_mode", "Camera position", "choice", "View",
-            choices=(("pov", "On my head or chest, looking where I look"),
-                     ("facing", "In front of me, looking at me")),
+            choices=(("facing", "In front of me, looking at me"),
+                     ("pov", "On my head or chest, looking where I look (experimental)")),
             help="How the picture maps to your hands. Part of the preset: for a camera somewhere else, "
-                 "duplicate a preset and change it there."),
+                 "duplicate a preset and change it there. On your head or chest, the camera sees the backs "
+                 "of your hands, which is harder to track: keep Rebuild hands in 3D on (Depth) there."),
+    Setting("tracking.hands_follow", "Hands follow", "choice", "View",
+            choices=(("head", "My head: look at the camera to use them"),
+                     ("room", "The room: the camera stays put while I look around")),
+            help="Only for a camera in front of you. With The room, hands keep their place when you turn your "
+                 "head. The camera is taken to be where you look when your hands first show up; if the hands "
+                 "come out turned, use Recenter hands (R) and face the camera. They still move with you when "
+                 "you walk, and turn with your game's snap turn."),
     Setting("camera.facing_distance", "Distance to camera", "float", "View", minimum=0.2, maximum=3.0,
             step=0.05, unit=" m", help="Only for a camera in front of you."),
     Setting("tracking.swap_hands", "Swap left and right", "bool", "View",
@@ -117,9 +126,15 @@ SETTINGS = (
             help="How the controller sits in your hand."),
 
     # Depth
+    Setting("calibration.rebuild_hand", "Rebuild hands in 3D", "bool", "Depth",
+            help="Builds each hand from where its joints appear in the picture, with a hand model whose "
+                 "fingers only bend toward the palm, instead of using the tracker's own 3D hand. Seen from "
+                 "behind, that one folds and twists, which shakes the distance, rotation and gestures. "
+                 "On in the POV preset; with the palms toward the camera it is not needed."),
     Setting("calibration.steady_hand_size", "Steady hand size", "bool", "Depth",
             help="Keeps each hand the same size over time, so its distance from the camera shakes less. "
-                 "Helps most with a camera behind your hands."),
+                 "Helps most with a camera behind your hands. Not needed with Rebuild hands in 3D, whose "
+                 "hand model has a fixed size."),
     Setting("calibration.hand_size_window", "Hand size memory", "int", "Depth", minimum=10, maximum=600,
             advanced=True, help="Frames the steady hand size is taken from. More is steadier but adapts "
                                 "slower if tracking misjudges the hand at first."),
@@ -165,15 +180,15 @@ SETTINGS = (
             help="Index curl that counts as a fully pressed trigger."),
     Setting("gestures.trigger_from_pinch", "Pinch pulls the trigger", "bool", "Gestures",
             help="Touching thumb and index tips also presses the trigger, like grabbing small things."),
-    Setting("gestures.grip_latch", "Latch grip", "bool", "Gestures",
+    Setting("gestures.grip_latch", "Steady grip", "bool", "Gestures",
             help="Grip is either fully closed or open, with a gap between grabbing and letting go, so "
                  "objects are not dropped and picked up again while you hold them."),
-    Setting("gestures.trigger_latch", "Latch trigger", "bool", "Gestures",
+    Setting("gestures.trigger_latch", "Steady trigger", "bool", "Gestures",
             help="The same for the trigger: pressed or released, nothing in between."),
-    Setting("gestures.latch_on", "Latch grabs at", "float", "Gestures", advanced=True,
-            help="Grip or trigger value where a latched control closes."),
-    Setting("gestures.latch_off", "Latch lets go below", "float", "Gestures", advanced=True,
-            help="Value where a latched control opens again. Keep it well under \"Latch grabs at\"."),
+    Setting("gestures.latch_on", "Steady: grabs at", "float", "Gestures", advanced=True,
+            help="Grip or trigger value where a steady control closes."),
+    Setting("gestures.latch_off", "Steady: lets go below", "float", "Gestures", advanced=True,
+            help="Value where a steady control opens again. Keep it well under \"Steady: grabs at\"."),
     Setting("gestures.pinch_open", "Pinch starts at", "float", "Gestures", minimum=0.1, maximum=1.5,
             unit=" palms", help="Thumb-to-index-tip distance, in palm lengths, where a pinch begins."),
     Setting("gestures.pinch_closed", "Full pinch at", "float", "Gestures", minimum=0.0, maximum=1.0,
@@ -231,6 +246,18 @@ SETTINGS = (
             minimum=0.0, maximum=5.0, step=0.1, advanced=True),
 
     # Driver connection
+    Setting("network.controller_type", "Show hands as", "choice", "Driver connection", apply=Apply.STEAMVR,
+            choices=(("touch", "Oculus Touch controllers"), ("index", "Valve Index controllers (finger tracking)")),
+            help="What games see. Index also sends each finger's curl, so games that support Index show your "
+                 "fingers. Touch works in more games. Takes effect the next time SteamVR starts."),
+    Setting("network.index_offset", "Index hand offset", "vec3", "Driver connection", minimum=-0.3,
+            maximum=0.3, step=0.005, decimals=3, unit=" m",
+            help="Only with Index: moves the hands relative to the controller, X right, Y up, Z back, for "
+                 "the left hand (the right one is mirrored). Your presets' placement stays as tuned for Touch."),
+    Setting("network.index_rotation_deg", "Index hand rotation", "vec3", "Driver connection", minimum=-180,
+            maximum=180, step=1, decimals=0, unit="°",
+            help="Only with Index: pitch, yaw, roll of the hands relative to the controller, for the left "
+                 "hand (the right one is mirrored)."),
     Setting("network.host", "Host", "text", "Driver connection", apply=Apply.RECONNECT, advanced=True),
     Setting("network.port", "Port", "int", "Driver connection", minimum=1024, maximum=65535, step=1,
             apply=Apply.RECONNECT, advanced=True),

@@ -84,3 +84,12 @@ class ControlMapper:
         held = value >= float(self.config["latch_off"]) if held else value >= float(self.config["latch_on"])
         self._latched[key] = held
         return 1.0 if held else 0.0
+
+    def finger_curls(self, hand_type: str, features: HandFeatures, t: float) -> Tuple[float, ...]:
+        """Smoothed curl of each finger, thumb to pinky, for the Index finger inputs and skeleton."""
+        key = hand_type + ".curls"
+        smoother = self._filters.get(key)
+        if smoother is None:
+            smoother = OneEuroFilter(float(self.config["controls_min_cutoff"]), float(self.config["controls_beta"]))
+            self._filters[key] = smoother
+        return tuple(min(1.0, max(0.0, c)) for c in smoother(features.curl, t))

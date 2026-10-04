@@ -20,6 +20,7 @@ from config_defaults import DEFAULT_CONFIG, DEFAULT_ROTATION_OFFSET_DEG, fill_de
 import presets
 from hand_identity import HandDetection, HandIdentityTracker
 from depth_assist import WiLoRDepthAssist
+from hand_fit import PALM, HandFitter, HandShape, bend_angles
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
 from utils.config_utils import get_value, set_value
 from utils.hand_size import HandSizeStabilizer
@@ -44,7 +45,7 @@ CAMERA_DEVICE_KEYS = ("camera.device_id", "camera.width", "camera.height", "came
 HANDS_MODEL_KEYS = ("tracking.max_hands", "tracking.detection_confidence",
                     "tracking.tracking_confidence", "tracking.model_complexity")
 # Settings that change how image axes map to the user's left/right and depth
-VIEW_KEYS = ("camera.", "tracking.view_mode", "tracking.palm_facing")
+VIEW_KEYS = ("camera.", "tracking.view_mode", "tracking.hands_follow", "tracking.palm_facing")
 
 
 class CameraLostError(RuntimeError):
@@ -98,6 +99,8 @@ class HandTracker:
         # Config values the tracker changed on its own (e.g. WiLoR failing to
         # load), for a GUI to pick up and clear
         self.changed_by_tracker: Dict[str, Any] = {}
+        # Set from another thread: tell the driver the user is facing the camera now
+        self.recenter_requested = False
         # Whether step()'s caller shows an OpenCV window that needs pumping
         self.cv_preview = False
         self.camera = None
@@ -162,6 +165,9 @@ class HandTracker:
         # runs opposite to the headset's: Z is reflected, and the hands are
         # placed relative to the camera's distance in front of the user.
         self.flip_z = mode == 'facing'
+        # A camera in front of the user can stay put in the room while the
+        # headset looks around; a camera on the head always turns with it
+        self.room_anchor = mode == 'facing' and str(tracking_config.get('hands_follow', 'head')).lower() == 'room'
         self.facing_distance = float(cam_config.get('facing_distance', 0.8))
         # Metric position: horizontal field of view of the camera
         self.hfov_deg = float(cam_config.get('hfov_deg', 70.0))
@@ -189,6 +195,13 @@ class HandTracker:
         # size wobble doesn't become depth jitter
         self.steady_hand_size = bool(self.calibration.get('steady_hand_size', False))
         self.hand_size = HandSizeStabilizer(int(self.calibration.get('hand_size_window', 90)))
+        # Rebuild each hand in 3D from MediaPipe's 2D points with a hand model
+        # of fixed size (hand_fit), instead of using MediaPipe's 3D shape
+        self.rebuild_hand = bool(self.calibration.get('rebuild_hand', False))
+        self.hand_fitter = None  # made for the frame size on first use
+        self.hand_fitter_key = None
+        # Per side: (time, fit parameters, wrist in pixels, time of the last fresh start)
+        self.hand_fits: Dict[str, Tuple[float, np.ndarray, np.ndarray, float]] = {}
         # Smoothing, per hand: image-plane position, depth (noisier, so
         # filtered on its own) and rotation. 'f' in the preview cycles modes.
         self.filter_config = self.calibration.get('filter', {})
@@ -311,6 +324,8 @@ class HandTracker:
             return self.configure_depth_assist
         if key.startswith('gestures.'):
             return self.create_gesture_detector
+        if key in ('network.controller_type', 'network.index_offset', 'network.index_rotation_deg'):
+            return None  # read every frame; the driver only switches type after a SteamVR restart
         if key.startswith('network.'):
             return self.create_socket_client
         return None
@@ -333,6 +348,7 @@ class HandTracker:
         self.configure_view()
         self.build_filters()  # each hand's history belonged to the other
         self.hand_size.reset()
+        self.hand_fits = {}
         print("Hands swapped")
 
     def fit_hand(self, hand_landmarks, world: List[Tuple[float, float, float]],
@@ -378,6 +394,54 @@ class HandTracker:
         if not 0.05 < points[0, 2] < 3.0:
             return None
         return points * np.array([-1.0 if self.mirror_x else 1.0, -1.0, -1.0])
+
+    # Starting over from fresh poses is several times slower than following
+    # last frame's fit, so a hand does it at most this often
+    REBUILD_REFRESH_SECONDS = 0.2
+    # Last frame's fit is only a starting point while the hand is still near
+    # it: wrist movement as a fraction of the frame width, and time
+    REBUILD_CONTINUITY = 0.08
+    REBUILD_MEMORY_SECONDS = 0.1
+
+    def rebuild_hand_points(self, landmarks: List[Tuple[float, float, float]], world: List[Tuple[float, float, float]],
+                            hand_type: str, frame_width: int, frame_height: int, now: float):
+        """
+        Rebuild a hand in 3D from its 2D landmarks with hand_fit's model, for
+        when MediaPipe's own 3D shape is unreliable (seen from behind).
+
+        Returns:
+            (world, points): the hand as MediaPipe-style world landmarks
+            (camera axes, centred on the palm) and as 21 x 3 joints in OpenVR
+            camera space, like fit_hand; or None if it could not be fitted
+        """
+        key = (frame_width, frame_height, self.hfov_deg, self.hand_scale)
+        if self.hand_fitter is None or self.hand_fitter_key != key:
+            focal = (frame_width / 2.0) / math.tan(math.radians(self.hfov_deg) / 2.0)
+            self.hand_fitter = HandFitter(HandShape.default(self.hand_scale), focal,
+                                          (frame_width / 2.0, frame_height / 2.0))
+            self.hand_fitter_key = key
+            self.hand_fits = {}
+        observed = np.array([(x * frame_width, y * frame_height) for x, y, _ in landmarks])
+        # The model is fitted to the picture, where a mirrored frame shows a
+        # right hand as a left one
+        image_right = (hand_type == "right") != self.frame_mirrored
+        previous, refreshed_at = None, -math.inf
+        state = self.hand_fits.get(hand_type)
+        if state is not None:
+            then, params, wrist, refreshed_at = state
+            if (now - then <= self.REBUILD_MEMORY_SECONDS
+                    and np.linalg.norm(observed[0] - wrist) <= self.REBUILD_CONTINUITY * frame_width):
+                previous = params
+        result = self.hand_fitter.fit(observed, image_right, previous, palm_away=self.palm_away,
+                                      bends=bend_angles(world),
+                                      allow_refresh=now - refreshed_at >= self.REBUILD_REFRESH_SECONDS)
+        if result is None:
+            return None
+        self.hand_fits[hand_type] = (now, result.params, observed[0], now if result.refreshed else refreshed_at)
+        points = result.points
+        centred = points - points[PALM].mean(axis=0)
+        return ([tuple(float(v) for v in p) for p in centred],
+                points * np.array([-1.0 if self.mirror_x else 1.0, -1.0, -1.0]))
 
     def estimate_wrist_position(self, hand_landmarks, world: List[Tuple[float, float, float]],
                                 frame_width: int, frame_height: int) -> Optional[Tuple[float, float, float]]:
@@ -571,13 +635,12 @@ class HandTracker:
             calibration['rotation_offset_deg'] = copy.deepcopy(tuned or DEFAULT_ROTATION_OFFSET_DEG)
             for section in modes:
                 section.pop('rotation_offset_deg', None)
-        # Settings added after this file was written start at their defaults,
-        # or at the active preset's value for one the preset sets
-        in_file = set(presets.snapshot(config))
+        # Settings added after this file was written start at the active
+        # preset's value, or else at their defaults
+        presets.fill_new_settings(config)
         fill_defaults(config, DEFAULT_CONFIG)
         # Placement used to be kept per view mode; it now belongs to presets
         presets.migrate(config)
-        presets.use_preset_values_for_new_settings(config, in_file)
         return config
 
     def handedness_evidence(self, hand_world_landmarks, handedness) -> float:
@@ -635,15 +698,21 @@ class HandTracker:
             world = [(lm.x, lm.y, lm.z) for lm in hand_world_landmarks.landmark]
 
         # Wrist position in OpenVR camera space, in metres
+        now = time.perf_counter()
         fitted = None
-        if world is not None:
+        if world is not None and self.rebuild_hand:
+            rebuilt = self.rebuild_hand_points(landmarks, world, hand_type, frame_width, frame_height, now)
+            if rebuilt is not None:
+                # The rebuilt hand stands in for MediaPipe's from here on:
+                # rotation and finger curl are read from it too
+                world, fitted = rebuilt
+        if world is not None and fitted is None:
             fitted = self.fit_hand(hand_landmarks, world, frame_width, frame_height, hand_type)
         camera_position = tuple(float(v) for v in fitted[0]) if fitted is not None else None
         if camera_position is None:
             camera_position = self.last_camera_position.get(hand_type)
         if camera_position is None:
             camera_position = self.estimate_wrist_position_fallback(landmarks)
-        now = time.perf_counter()
         if self.depth_source == 'wilor':
             camera_position = self.apply_assisted_depth(landmarks[0][:2], camera_position, now)
         camera_position = self.smooth_camera_position(hand_type, camera_position, now)
@@ -674,17 +743,20 @@ class HandTracker:
             rotation = self.rotation_filters[hand_type](rotation, now)
         else:
             rotation = (1.0, 0.0, 0.0, 0.0)
+        position, rotation = self.index_adjustment(hand_type, position, rotation)
 
         # Trigger, grip and the gesture name, from finger curl and pinch. Without
         # world landmarks there are no features, so the old detector is the fallback.
         gesture_config = self.config['gestures']
         features = None
+        finger_curls: Tuple[float, ...] = ()
         scores: Dict[str, float] = {}
         if world is not None:
             features = compute_features(world, float(gesture_config['pinch_open']),
                                         float(gesture_config['pinch_closed']),
                                         gesture_config.get('curl_open_deg'), gesture_config.get('curl_full_deg'))
             trigger_value, grip_value = self.control_mapper(hand_type, features, now)
+            finger_curls = self.control_mapper.finger_curls(hand_type, features, now)
             scores = score_gestures(features, self.control_mapper.pinch_strength(features), gesture_config)
             gesture = self.gesture_classifier(hand_type, scores)
         else:
@@ -700,10 +772,29 @@ class HandTracker:
             trigger_value=trigger_value,
             grip_value=grip_value,
             landmarks=landmarks,
-            is_detected=True
+            is_detected=True,
+            finger_curls=finger_curls,
         )
         return TrackedHand(data=hand_data, camera_position=camera_position, camera_points=camera_points,
                            features=features, gesture_scores=scores)
+
+    def index_adjustment(self, hand_type: str, position: Tuple[float, float, float],
+                         rotation: Tuple[float, float, float, float]):
+        """
+        Shown as Index controllers, move each hand from where a Touch sits in it
+        to where an Index does, in the controller's own frame. The settings are
+        for the left hand; the right one is its mirror image.
+        """
+        network = self.config['network']
+        if str(network.get('controller_type', 'touch')) != 'index':
+            return position, rotation
+        side = 1.0 if hand_type == 'left' else -1.0
+        ox, oy, oz = network.get('index_offset', (0.0, 0.0, 0.0))
+        pitch, yaw, roll = network.get('index_rotation_deg', (0.0, 0.0, 0.0))
+        dx, dy, dz = quat_rotate(rotation, (side * ox, oy, oz))
+        position = (position[0] + dx, position[1] + dy, position[2] + dz)
+        rotation = quat_multiply(rotation, quat_from_euler_deg(pitch, side * yaw, side * roll))
+        return position, rotation
 
     def calculate_palm_size(self, landmarks: List[Tuple[float, float, float]]) -> float:
         """
@@ -847,8 +938,13 @@ class HandTracker:
                     print(f"{hand.data.hand_type}: {hand.data.gesture} "
                           f"T:{hand.data.trigger_value:.2f} G:{hand.data.grip_value:.2f}")
 
+        if self.recenter_requested:
+            self.recenter_requested = False
+            # A camera fixed in the room is where the headset looks now
+            self.socket_client.send("RECENTER:1")
+        controller_type = str(self.config['network'].get('controller_type', 'touch'))
         for hand in tracked:
-            self.socket_client.send(hand.data.to_protocol_string())
+            self.socket_client.send(hand.data.to_protocol_string(controller_type, self.room_anchor))
         t_sent = time.perf_counter()
         self.last_timings = (t_frame, t_tracked, t_sent)
 

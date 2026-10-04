@@ -1,11 +1,11 @@
 {
   "camera": {
-    "device_id": 1,
+    "device_id": 0,
     "width": 640,
     "height": 480,
     "fps": 30,
     "flip_horizontal": false,
-    "source_mirrored": false,
+    "source_mirrored": true,
     "backend": "auto",
     "rotate_180": false,
     "hfov_deg": 70.0,
@@ -18,7 +18,7 @@
     "detection_confidence": 0.7,
     "tracking_confidence": 0.5,
     "model_complexity": 1,
-    "view_mode": "pov",
+    "view_mode": "facing",
     "palm_facing": "mode",
     "swap_hands": false,
     "depth_source": "mediapipe",
@@ -42,37 +42,87 @@
   },
   "network": {
     "host": "127.0.0.1",
-    "port": 65432
+    "port": 65432,
+    "controller_type": "touch",
+    "index_offset": [
+      0.0,
+      0.0,
+      -0.1
+    ],
+    "index_rotation_deg": [
+      45.0,
+      0.0,
+      0.0
+    ]
   },
   "gestures": {
     "pinch_threshold": 0.05,
-    "finger_extended_threshold": 0.6
+    "finger_extended_threshold": 0.6,
+    "pinch_open": 0.55,
+    "pinch_closed": 0.2,
+    "pinch_palm_gate": 0.6,
+    "trigger_from_pinch": true,
+    "trigger_curl_start": 0.15,
+    "trigger_curl_full": 0.75,
+    "grip_curl_start": 0.2,
+    "grip_curl_full": 0.8,
+    "controls_min_cutoff": 2.0,
+    "controls_beta": 5.0,
+    "gesture_enter": 0.6,
+    "gesture_exit": 0.4,
+    "gesture_confirm_frames": 3,
+    "finger_closed_start": 0.25,
+    "finger_closed_full": 0.65,
+    "thumb_closed_start": 0.2,
+    "thumb_closed_full": 0.5
   },
   "calibration": {
     "scale": 1.0,
     "hand_scale": 1.0,
+    "steady_hand_size": false,
+    "rebuild_hand": false,
+    "hand_size_window": 90,
+    "position_offset": [
+      0.0,
+      0.0,
+      -0.2
+    ],
+    "camera_rotation_deg": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation_offset_deg": {
+      "left": [
+        0.0,
+        0.0,
+        -90.0
+      ],
+      "right": [
+        0.0,
+        0.0,
+        90.0
+      ]
+    },
     "filter": {
       "mode": "one_euro",
-      "position": { "min_cutoff": 1.0, "beta": 1.5 },
-      "depth": { "min_cutoff": 0.3, "beta": 2.0 },
-      "rotation": { "min_cutoff": 1.0, "beta": 0.5 },
+      "position": {
+        "min_cutoff": 1.0,
+        "beta": 1.41
+      },
+      "depth": {
+        "min_cutoff": 0.3,
+        "beta": 2.0
+      },
+      "rotation": {
+        "min_cutoff": 1.0,
+        "beta": 0.5
+      },
       "d_cutoff": 1.0,
-      "ema": { "position": 0.7, "depth": 0.35, "rotation": 0.5 }
-    },
-    "pov": {
-      "position_offset": [0.0, 0.0, 0.0],
-      "camera_rotation_deg": [0.0, 0.0, 0.0],
-      "rotation_offset_deg": {
-        "left": [0.0, 0.0, -127.0],
-        "right": [0.0, 0.0, 127.0]
-      }
-    },
-    "facing": {
-      "position_offset": [0.0, 0.0, 0.0],
-      "camera_rotation_deg": [0.0, 0.0, 0.0],
-      "rotation_offset_deg": {
-        "left": [0.0, 0.0, 0.0],
-        "right": [0.0, 0.0, 0.0]
+      "ema": {
+        "position": 0.7,
+        "depth": 0.35,
+        "rotation": 0.5
       }
     }
   },
@@ -81,5 +131,11 @@
     "show_landmarks": true,
     "show_fps": true,
     "log_gestures": false
-  }
+  },
+  "addons": {
+    "check_at_startup": true
+  },
+  "preset_format": 3,
+  "presets": {},
+  "preset": "Facing"
 }

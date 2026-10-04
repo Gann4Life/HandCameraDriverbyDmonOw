@@ -1,7 +1,8 @@
 """
 Settings editors generated from gui.settings_schema. Edits are written into
 the GUI's config copy and announced with `changed`, so the running tracker can
-apply them live; saving to disk is the main window's job.
+apply them live; saving to disk is the main window's job. The window shows two
+panels: the active preset's settings, and the ones every preset shares.
 """
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -10,7 +11,6 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout
                                QLabel, QLineEdit, QMessageBox, QScrollArea, QSlider, QSpinBox, QVBoxLayout,
                                QWidget)
 
-import presets
 from gui.settings_schema import RESOLUTIONS, SECTIONS, Apply, Setting
 from utils.config_utils import get_value, set_value
 
@@ -111,7 +111,7 @@ class _Row:
 class SettingsPanel(QWidget):
     changed = Signal(dict)  # config keys -> new values
 
-    def __init__(self, config: dict, settings: Sequence[Setting], parent=None):
+    def __init__(self, config: dict, settings: Sequence[Setting], header: str = "", parent=None):
         super().__init__(parent)
         self.config = config
         self._rows: List[_Row] = []
@@ -120,6 +120,11 @@ class SettingsPanel(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        if header:
+            note = QLabel(header)
+            note.setWordWrap(True)
+            note.setStyleSheet("color: gray")
+            outer.addWidget(note)
         self.advanced_toggle = QCheckBox("Show advanced settings")
         self.advanced_toggle.toggled.connect(self._update_visibility)
         outer.addWidget(self.advanced_toggle)
@@ -148,6 +153,9 @@ class SettingsPanel(QWidget):
     def setting_for(self, key: str) -> Optional[Setting]:
         return next((row.setting for row in self._rows if row.setting.key == key), None)
 
+    def has(self, key: str) -> bool:
+        return self.setting_for(key) is not None
+
     def set_value(self, key: str, value: Any):
         """Change a setting as if edited (with confirmation), e.g. from a toolbar button."""
         row = next((row for row in self._rows if row.setting.key == key), None)
@@ -171,18 +179,12 @@ class SettingsPanel(QWidget):
         row = _Row(setting, editor, load, lambda: load(self._current(setting)))
         signal.connect(lambda value, r=row: self._edited(r, value))
 
-        notes = [] if setting.apply is Apply.LIVE else [setting.apply.value]
-        shared = not any(presets.is_preset_key(key) for key in setting.config_keys)
-        if shared:
-            notes.append("all presets")
         text = setting.label
-        if notes:
-            text += f"  <span style='color:gray; font-size:small'>({', '.join(notes)})</span>"
+        if setting.apply is not Apply.LIVE:
+            text += f"  <span style='color:gray; font-size:small'>({setting.apply.value})</span>"
         label = QLabel(text)
         label.setTextFormat(Qt.RichText)
         help_text = setting.help
-        if shared:
-            help_text = f"{help_text}\n\nShared by every preset." if help_text else "Shared by every preset."
         label.setToolTip(help_text)
         editor.setToolTip(help_text)
         self._forms[setting.section].addRow(label, editor)
