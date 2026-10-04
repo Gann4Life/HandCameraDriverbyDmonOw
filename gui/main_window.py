@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
         main.setSizes([840, 560])
         self.setCentralWidget(main)
 
+        self._recentering = False
         self._build_actions()
         self._build_status_bar()
         self._update_title()
@@ -131,9 +132,11 @@ class MainWindow(QMainWindow):
         self.calibrate_action.triggered.connect(self._calibrate_gestures)
         recenter_action = QAction("Recenter hands", self)
         recenter_action.setShortcut(QKeySequence("R"))
+        # Holding R would otherwise fire it again with every key repeat
+        recenter_action.setAutoRepeat(False)
         recenter_action.setToolTip(f"With Hands follow: The room. In {RECENTER_DELAY_S} seconds, the direction "
                                    "your headset faces becomes where the camera is: face it (R)")
-        recenter_action.triggered.connect(lambda: self._recenter_countdown(RECENTER_DELAY_S))
+        recenter_action.triggered.connect(self._start_recenter)
         addons_action = QAction("Add-ons", self)
         addons_action.setToolTip("Install or update the SteamVR driver and WiLoR depth")
         addons_action.triggered.connect(lambda: self.show_addons())
@@ -164,15 +167,27 @@ class MainWindow(QMainWindow):
         landmarks.toggled.connect(self._set_show_landmarks)
         view_menu.addAction(landmarks)
 
+    def _start_recenter(self):
+        """One countdown at a time: pressing again while it runs does nothing."""
+        if self._recentering:
+            return
+        if self.worker is None:
+            self.statusBar().showMessage("Start tracking first.", 3000)
+            return
+        self._recentering = True
+        self._recenter_countdown(RECENTER_DELAY_S)
+
     def _recenter_countdown(self, seconds: int):
         """Leave time to put the headset on and face the camera, then recenter."""
         if self.worker is None:
+            self._recentering = False
             self.statusBar().showMessage("Start tracking first.", 3000)
             return
         if seconds > 0:
             self.statusBar().showMessage(f"Face the camera with your headset: recentering in {seconds}...")
             QTimer.singleShot(1000, lambda: self._recenter_countdown(seconds - 1))
             return
+        self._recentering = False
         self.worker.recenter()
         self.statusBar().showMessage("Hands recentered on the camera.", 3000)
 
