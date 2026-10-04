@@ -38,8 +38,8 @@ What this proves:
 | SteamVR config | `<Steam>\config\steamvr.vrsettings` |
 | SteamVR log | `<Steam>\logs\vrserver.txt` |
 
-Note: SteamVR is installed under Scoop, so paths differ from the default
-`C:\Program Files (x86)\Steam\steamapps\common\SteamVR`. Adjust any command accordingly.
+Note: `<Steam>` is wherever Steam is installed; the default is
+`C:\Program Files (x86)\Steam`. Adjust any command accordingly.
 
 ### Installed Python packages
 
