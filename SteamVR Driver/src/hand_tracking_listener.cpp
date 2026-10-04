@@ -144,33 +144,32 @@ void HandTrackingListener::ListenThread()
 
 		DriverLog( "HandTrackingListener: Client connected" );
 
-		// Receive data
+		// Receive data. TCP is a stream: one recv can end in the middle of a line, so
+		// a line is only processed once its newline arrives.
 		char buffer[ 2048 ];
+		std::string pending;
 		while ( is_running_ )
 		{
-			memset( buffer, 0, sizeof( buffer ) );
-			int recv_size = recv( client_socket_, buffer, sizeof( buffer ) - 1, 0 );
+			int recv_size = recv( client_socket_, buffer, sizeof( buffer ), 0 );
 
 			if ( recv_size > 0 )
 			{
-				buffer[ recv_size ] = '\0';
-				std::string data( buffer );
+				pending.append( buffer, recv_size );
 
-				// Split by newlines in case multiple messages were sent
 				size_t pos = 0;
-				while ( ( pos = data.find( '\n' ) ) != std::string::npos )
+				while ( ( pos = pending.find( '\n' ) ) != std::string::npos )
 				{
-					std::string line = data.substr( 0, pos );
+					std::string line = pending.substr( 0, pos );
 					if ( !line.empty() )
 					{
 						ProcessHandData( line );
 					}
-					data.erase( 0, pos + 1 );
+					pending.erase( 0, pos + 1 );
 				}
-				// Process remaining data if any
-				if ( !data.empty() )
+				// A tracker that never sends a newline would grow this forever
+				if ( pending.size() > sizeof( buffer ) * 4 )
 				{
-					ProcessHandData( data );
+					pending.clear();
 				}
 			}
 			else if ( recv_size == 0 )
