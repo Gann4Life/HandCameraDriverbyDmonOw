@@ -12,7 +12,7 @@ import sys
 import time
 import numpy as np
 from typing import Any, Callable, Dict, List, Tuple, Optional
-from hand_data import HAND_CONNECTIONS, HandData, TrackedHand, TrackingFrame
+from hand_data import HAND_CONNECTIONS, HandData, TrackedHand, TrackingFrame, protocol_greeting
 from hand_features import compute_features
 from hand_controls import ControlMapper
 from gesture_scores import GestureClassifier, score_gestures
@@ -267,7 +267,12 @@ class HandTracker:
         if self.socket_client is not None:
             self.socket_client.close()
         net_config = self.config['network']
-        self.socket_client = SocketClient(host=net_config['host'], port=int(net_config['port']))
+        self.socket_client = SocketClient(host=net_config['host'], port=int(net_config['port']),
+                                          greeting=lambda: protocol_greeting(self.controller_type()))
+
+    def controller_type(self) -> str:
+        """What the driver presents the hands as, "touch" or "index"."""
+        return str(self.config['network'].get('controller_type', 'touch'))
 
     def configure_depth_assist(self):
         self.depth_assist_config = self.config['tracking'].get('depth_assist', {})
@@ -943,11 +948,13 @@ class HandTracker:
             self.recenter_requested = False
             # A camera fixed in the room is where the headset looks now
             self.socket_client.send("RECENTER:1")
-        controller_type = str(self.config['network'].get('controller_type', 'touch'))
+        controller_type = self.controller_type()
         for hand in tracked:
             if not hand.data.is_sendable_pose():
                 continue  # the driver keeps the hand's last good pose
             self.socket_client.send(hand.data.to_protocol_string(controller_type, self.room_anchor))
+        # With no hands in view nothing else is sent, and the driver drops silent connections
+        self.socket_client.keepalive()
         t_sent = time.perf_counter()
         self.last_timings = (t_frame, t_tracked, t_sent)
 

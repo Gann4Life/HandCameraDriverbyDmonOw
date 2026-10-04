@@ -4,7 +4,7 @@ import re
 import pytest
 
 import gesture_scores
-from hand_data import HandData
+from hand_data import PROTOCOL_VERSION, HandData, protocol_greeting
 
 # The GESTURE values PROTOCOL.md lists
 GESTURES = {"OPEN", "FIST", "POINT", "PINCH", "THUMBS_UP", "PEACE", "UNKNOWN"}
@@ -90,6 +90,17 @@ def test_a_pose_the_driver_would_drop_is_not_sendable(position, rotation):
     data = hand()
     data.position, data.rotation = position, rotation
     assert not data.is_sendable_pose()
+
+
+@pytest.mark.parametrize("controller, expected", [("touch", "TOUCH"), ("index", "INDEX")])
+def test_greeting_as_in_protocol_md(controller, expected):
+    line = protocol_greeting(controller)
+    # The driver only takes it as a greeting when HELLO comes first
+    assert line.startswith("HELLO:HANDCAM,")
+    sent = fields(line)
+    assert (sent["VERSION"], sent["TYPE"]) == (str(PROTOCOL_VERSION), expected)
+    # Drivers older than the greeting read it as a hand message: without HAND they drop it
+    assert "HAND" not in sent
 
 
 def test_one_line_without_the_terminator():

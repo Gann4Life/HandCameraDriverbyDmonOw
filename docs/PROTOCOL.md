@@ -5,8 +5,8 @@ sides and this document in the same commit.
 
 | Side | Writes / reads it |
 |---|---|
-| Tracker | `HandData.to_protocol_string` (`hand_data.py`), sent by `utils/socket_client.py`; `RECENTER` from `HandTracker.step` (`Camera.py`) |
-| Driver | `ParseHandMessage` and `LineSplitter` (`SteamVR Driver/src/hand_message.cpp`), applied by `HandTrackingListener::ProcessHandData` (`hand_tracking_listener.cpp`) |
+| Tracker | `HandData.to_protocol_string` and `protocol_greeting` (`hand_data.py`), sent by `utils/socket_client.py`; `RECENTER` from `HandTracker.step` (`Camera.py`) |
+| Driver | `ParseGreeting`, `ParseHandMessage` and `LineSplitter` (`SteamVR Driver/src/hand_message.cpp`); the socket and greeting check in `TrackerServer` (`tracker_server.cpp`); messages applied by `HandTrackingListener::ProcessHandData` (`hand_tracking_listener.cpp`) |
 
 ## Transport
 
@@ -18,6 +18,46 @@ sides and this document in the same commit.
   and only processes a line once its `\n` arrives. Empty lines are ignored, and a trailing `\r` is
   stripped. A line longer than 1024 bytes is dropped whole, up to its `\n`.
 - The tracker reconnects on its own (every `reconnect_interval`, off the tracking thread).
+- On Windows no other process can share the driver's port: if it is taken, the driver can't listen
+  and logs it.
+
+## Greeting
+
+The first line the tracker sends on every connection, before any hand or recenter line:
+
+```
+HELLO:HANDCAM,VERSION:1,TYPE:INDEX
+```
+
+| Key | Value | Meaning |
+|---|---|---|
+| `HELLO` | `HANDCAM` | Marks the line as a greeting. The line must start with `HELLO:HANDCAM` |
+| `VERSION` | integer, 1 or more | The protocol version the tracker speaks (see Versioning) |
+| `TYPE` | `TOUCH` / `INDEX` | The controller profile, repeated from the hand lines (see below) |
+
+Anything can connect to a local port, so the driver serves a connection only after a valid greeting.
+It closes the connection when:
+
+- no greeting arrives within 1 s of connecting (a slow drip of bytes doesn't extend this);
+- the first line isn't a greeting: another program, an HTTP request, or a tracker older than this
+  driver, which doesn't greet;
+- `VERSION` differs from the driver's own;
+- after the greeting, no complete line arrives for 5 s.
+
+Each refusal reason is logged once, not on every retry. A version mismatch says which side to update.
+Per-connection log lines (connected, disconnected, went silent, receive error) are limited to one a
+second. After a refusal the driver goes on listening for the next client.
+
+### Keepalive
+
+The tracker sends nothing when it has no hand to report, and the driver closes a silent connection
+after 5 s. So when the tracker has sent nothing for 1 s, it repeats the greeting line
+(`SocketClient.keepalive()`, called each frame). After the greeting, the driver ignores a repeated
+greeting; it doesn't treat it as a hand line. Drivers older than the greeting drop it too (no `HAND`).
+
+`TYPE` is there for drivers older than the greeting. They read this line as a hand message (it has no
+`HAND`, so they drop it) and fix the controller type from the first line they see, so the greeting
+makes them pick the right type. The current driver takes the type from hand lines as before.
 
 ## Message: hand
 
@@ -80,13 +120,23 @@ to a fixed camera the next `ANCHOR:ROOM` hand captures it again and the last rec
 
 ## Versioning
 
-Optional keys are added at the end, and old drivers ignore what they don't know, so a newer tracker
-works with an older driver (without the new feature). Removing a key or changing its meaning is a
-breaking change: it needs a `VERSION` key first, and both sides updated in the same release.
+The protocol version is in the greeting: `PROTOCOL_VERSION` in `hand_data.py` and `kProtocolVersion`
+in `hand_message.h`. The current version is 1. The driver refuses any version other than its own, so
+`VERSION` counts breaking changes only. Adding an optional key must not raise it: the driver ignores
+keys it doesn't know, so a newer tracker still works with it. Removing a key or changing its meaning
+is a breaking change: bump the version on both sides in the same release.
+
+Compatibility:
+
+- A new tracker with an older driver (one that predates the greeting) works: that driver drops the
+  greeting line and uses its `TYPE`.
+- An old tracker with a new driver is refused and logged, because it doesn't greet.
+- The tracker and the driver ship together, and the Add-ons window updates the driver.
 
 ## Known gaps
 
+- The greeting is not authentication. Any local process can greet and send input. A per-session
+  token may come later.
 - `GESTURE` reaches the driver but drives nothing (buttons and stick are held at rest).
-- The protocol has no version key.
 - The Index placement is corrected on both sides (see "Pose with `TYPE:INDEX`"); one side should own it.
 - Switching away from `ANCHOR:ROOM` and back loses the last recenter.

@@ -73,6 +73,29 @@ namespace
 	}
 }
 
+std::optional< int > ParseGreeting( std::string_view line )
+{
+	if ( line.size() > kMaxLineBytes || line.rfind( "HELLO:HANDCAM", 0 ) != 0 )
+	{
+		return std::nullopt;
+	}
+	const auto fields = SplitFields( line );
+	const auto hello = fields.find( "HELLO" );
+	const auto version = fields.find( "VERSION" );
+	if ( hello == fields.end() || hello->second != "HANDCAM" || version == fields.end() )
+	{
+		return std::nullopt;
+	}
+	int value = 0;
+	const char *end = version->second.data() + version->second.size();
+	const auto result = std::from_chars( version->second.data(), end, value );
+	if ( result.ec != std::errc() || result.ptr != end || value < 1 )
+	{
+		return std::nullopt;
+	}
+	return value;
+}
+
 std::optional< HandMessage > ParseHandMessage( std::string_view line )
 {
 	if ( line.size() > kMaxLineBytes )

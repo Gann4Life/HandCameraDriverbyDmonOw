@@ -21,6 +21,22 @@ HAND_CONNECTIONS = (
 # The driver drops a line with a coordinate beyond this (kMaxPositionM in hand_message.cpp)
 MAX_POSITION_M = 10.0
 
+# docs/PROTOCOL.md version; the driver refuses a tracker that greets with another (kProtocolVersion)
+PROTOCOL_VERSION = 1
+
+
+def protocol_greeting(controller_type: str = "touch") -> str:
+    """
+    The first line on every connection to the driver, which closes connections without it.
+    TYPE is repeated from the hand lines because drivers older than the greeting read this
+    line as a hand message, and the first one they read fixes the controller type.
+    """
+    return f"HELLO:HANDCAM,VERSION:{PROTOCOL_VERSION},{_type_field(controller_type)}"
+
+
+def _type_field(controller_type: str) -> str:
+    return f"TYPE:{controller_type.upper()}"
+
 
 def _unit(value: float) -> float:
     """value clamped to 0..1, as the protocol defines trigger, grip and curls; NaN and infinity become 0."""
@@ -77,7 +93,7 @@ class HandData:
             f"TRIGGER:{_unit(self.trigger_value):.2f},"
             f"GRIP:{_unit(self.grip_value):.2f},"
             f"GESTURE:{self.gesture},"
-            f"TYPE:{controller_type.upper()}"
+            f"{_type_field(controller_type)}"
             f"{curls}"
             f"{anchor}"
         )

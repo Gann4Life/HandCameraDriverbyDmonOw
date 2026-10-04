@@ -226,6 +226,28 @@ namespace
 		CHECK( delivered == 0 );
 		CHECK( lines.size() == 1 && lines[ 0 ] == "RECENTER:1" );
 	}
+
+	void GreetingGivesTheVersion()
+	{
+		current_test = "GreetingGivesTheVersion";
+		CHECK( ParseGreeting( "HELLO:HANDCAM,VERSION:1" ) == 1 );
+		CHECK( ParseGreeting( "HELLO:HANDCAM,VERSION:2,TYPE:INDEX" ) == 2 );
+	}
+
+	void OtherFirstLinesAreNoGreeting()
+	{
+		current_test = "OtherFirstLinesAreNoGreeting";
+		CHECK( !ParseGreeting( "GET / HTTP/1.1" ) );
+		CHECK( !ParseGreeting( kGood ) );
+		CHECK( !ParseGreeting( "TYPE:INDEX,HELLO:HANDCAM,VERSION:1" ) );  // must come first
+		CHECK( !ParseGreeting( "HELLO:HANDCAMX,VERSION:1" ) );
+		CHECK( !ParseGreeting( "HELLO:HANDCAM" ) );
+		for ( const char *version : { "", "0", "-1", "1.0", "1x", " 1", "99999999999" } )
+		{
+			CHECK( !ParseGreeting( std::string( "HELLO:HANDCAM,VERSION:" ) + version ) );
+		}
+		CHECK( !ParseGreeting( "HELLO:HANDCAM,VERSION:1," + std::string( kMaxLineBytes, 'x' ) ) );
+	}
 }
 
 int main()
@@ -247,6 +269,8 @@ int main()
 	SplitterJoinsLinesAcrossReads();
 	SplitterLimitIsInclusive();
 	SplitterDropsAnOverlongLineWhole();
+	GreetingGivesTheVersion();
+	OtherFirstLinesAreNoGreeting();
 	std::printf( failures ? "%d check(s) failed\n" : "all checks passed\n", failures );
 	return failures ? 1 : 0;
 }

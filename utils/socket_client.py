@@ -4,27 +4,31 @@ Socket client for communication with SteamVR driver.
 import socket
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 
 class SocketClient:
     """Handles socket communication with the SteamVR driver."""
-    
-    def __init__(self, host: str = "127.0.0.1", port: int = 65432, 
-                 auto_reconnect: bool = True, reconnect_interval: float = 5.0):
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 65432,
+                 auto_reconnect: bool = True, reconnect_interval: float = 5.0,
+                 greeting: Optional[Callable[[], str]] = None):
         """
         Initialize socket client.
-        
+
         Args:
             host: Server host address
             port: Server port
             auto_reconnect: Whether to automatically reconnect on connection loss
             reconnect_interval: Seconds between reconnection attempts
+            greeting: Returns the line sent first on every connection, before any data
         """
         self.host = host
         self.port = port
         self.auto_reconnect = auto_reconnect
         self.reconnect_interval = reconnect_interval
+        self.greeting = greeting
+        self.last_sent = 0.0
         self.socket: Optional[socket.socket] = None
         self.connected = False
         self.last_reconnect_attempt = 0.0
@@ -44,6 +48,9 @@ class SocketClient:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(5.0)
             self.socket.connect((self.host, self.port))
+            if self.greeting:
+                self.socket.sendall((self.greeting() + "\n").encode("utf-8"))
+            self.last_sent = time.monotonic()
             self.connected = True
             print(f"Connected to SteamVR driver at {self.host}:{self.port}")
             return True
@@ -84,6 +91,7 @@ class SocketClient:
                 data += '\n'
             
             self.socket.sendall(data.encode('utf-8'))
+            self.last_sent = time.monotonic()
             return True
             
         except Exception as e:
@@ -91,6 +99,11 @@ class SocketClient:
             self.connected = False
             return False
     
+    def keepalive(self, interval: float = 1.0) -> None:
+        """Repeat the greeting when nothing was sent for interval seconds: the driver drops silent connections."""
+        if self.connected and self.greeting and time.monotonic() - self.last_sent >= interval:
+            self.send(self.greeting())
+
     def close(self):
         """Close the socket connection."""
         if self.socket:

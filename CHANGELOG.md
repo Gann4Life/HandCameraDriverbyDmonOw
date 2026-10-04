@@ -17,7 +17,21 @@ What changed for users in each version. The format follows
 - **Steady grip** and **Steady trigger** (Gestures): grabbing and letting go need a clear gap, so a
   value near the game's threshold no longer grabs and drops. Off by default.
 
+### Changed
+- The app and the SteamVR driver now greet each other with a protocol version when they connect. The
+  driver refuses a connection that doesn't greet within 1 s, isn't from the app (another program, a
+  browser), or has a different version, and logs why. If you update only one side, the log says which
+  one to update; the Add-ons window updates the driver. An older app can't connect to this driver.
+- The driver closes a connection that sends nothing for 5 s. The app keeps it open while no hands are
+  visible.
+- The SteamVR driver is the only program that can use its port on Windows.
+
 ### Fixed
+- The driver could crash SteamVR when it shut down while the app was connected.
+- The driver used to stop listening for good after one failed connection. Now it keeps listening.
+- Hand position and rotation could be out of step for a frame.
+- The driver log has fewer repeated lines: "camera direction set" and connection messages are
+  limited.
 - A malformed message to the SteamVR driver (a bad number, NaN, a huge value) could crash SteamVR.
   The driver now checks every message and ignores broken ones; trigger, grip and finger values are
   kept between 0 and 1.

@@ -1,30 +1,17 @@
 //============ Copyright (c) Valve Corporation, All rights reserved. ============
 #pragma once
 
-#include <thread>
 #include <atomic>
+#include <chrono>
 #include <string>
-
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-#else
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#define SOCKET int
-#define INVALID_SOCKET -1
-#define SOCKET_ERROR -1
-#define closesocket close
-#endif
 
 #include "controller_device_driver.h"
 #include "hand_message.h"
+#include "tracker_server.h"
 
 //-----------------------------------------------------------------------------
-// Purpose: Listens for hand tracking data from the Python script via socket
+// Purpose: Applies the tracker's messages (docs/PROTOCOL.md) to the controllers.
+// The socket itself is TrackerServer's.
 //-----------------------------------------------------------------------------
 class HandTrackingListener
 {
@@ -40,7 +27,6 @@ public:
 	bool RequestedProfile( ControllerProfile &profile ) const;
 
 private:
-	void ListenThread();
 	void ProcessHandData( const std::string &data );
 	// Where the headset looks now becomes the direction of a camera fixed in the room
 	void CaptureRoomForward();
@@ -50,14 +36,11 @@ private:
 
 	// -1 until the first message, then a ControllerProfile
 	std::atomic<int> requested_profile_{ -1 };
+	// Only touched on the server's thread
 	bool warned_profile_change_ = false;
 	bool warned_bad_line_ = false;
 	bool room_forward_set_ = false;
+	std::chrono::steady_clock::time_point last_direction_log_{};
 
-	std::atomic<bool> is_running_;
-	std::thread listen_thread_;
-	
-	SOCKET server_socket_;
-	SOCKET client_socket_;
-	int port_;
+	TrackerServer server_;
 };
