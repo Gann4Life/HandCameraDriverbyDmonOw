@@ -41,8 +41,10 @@ when any field is malformed:
 - a `HAND` other than `LEFT` / `RIGHT`.
 
 Values that are well-formed but out of range are fixed instead: `TRIGGER`, `GRIP` and each `CURL`
-value are clamped to 0..1, and the quaternion is normalised. The tracker clamps `TRIGGER` and `GRIP`
-before sending too.
+value are clamped to 0..1, and the quaternion is normalised. The tracker clamps `TRIGGER`, `GRIP`
+and each `CURL` value before sending too, and sends `0` for any of them that is NaN or infinite.
+It never sends a hand whose pose the driver would drop (NaN or infinite, beyond ±10 m, or a zero
+quaternion): it skips that hand for the frame, so the driver keeps the controller's last state.
 
 | Key | Value | Sent | Meaning |
 |---|---|---|---|

@@ -2,9 +2,11 @@ import math
 
 import pytest
 
-from utils.one_euro import OneEuroFilter, QuaternionOneEuroFilter
+from utils.one_euro import (ExponentialFilter, OneEuroFilter, QuaternionExponentialFilter,
+                             QuaternionOneEuroFilter)
 
 DT = 1.0 / 30.0
+NAN = float("nan")
 
 
 def test_first_sample_passes_through():
@@ -66,3 +68,24 @@ def test_quaternion_output_is_unit_length():
     smooth((1.0, 0.0, 0.0, 0.0), 0.0)
     out = smooth((math.cos(0.5), 0.0, math.sin(0.5), 0.0), DT)
     assert math.sqrt(sum(c * c for c in out)) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("make, sample", [
+    (OneEuroFilter, (0.5, -0.5, 1.0, 0.0)),
+    (QuaternionOneEuroFilter, (1.0, 0.0, 0.0, 0.0)),
+    (lambda: ExponentialFilter(0.5), (0.5, -0.5, 1.0, 0.0)),
+    (lambda: QuaternionExponentialFilter(0.5), (1.0, 0.0, 0.0, 0.0)),
+])
+@pytest.mark.parametrize("bad", [NAN, float("inf")])
+def test_a_non_finite_sample_is_ignored(make, sample, bad):
+    # Kept in the history, one bad sample would poison every later output
+    smooth = make()
+    smooth(sample, 0.0)
+    assert smooth((bad,) + sample[1:], DT) == pytest.approx(sample)
+    assert smooth(sample, 2 * DT) == pytest.approx(sample)
+
+
+def test_a_non_finite_first_sample_leaves_no_history():
+    smooth = QuaternionOneEuroFilter()
+    smooth((NAN, 0.0, 0.0, 0.0), 0.0)
+    assert smooth((1.0, 0.0, 0.0, 0.0), DT) == (1.0, 0.0, 0.0, 0.0)

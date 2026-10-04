@@ -485,7 +485,8 @@ class HandTracker:
         x, y = self.position_filters[hand_type](position[:2], t)
         (z,) = self.depth_filters[hand_type]((position[2],), t)
         position = (x, y, z)
-        self.last_camera_position[hand_type] = position
+        if all(math.isfinite(v) for v in position):
+            self.last_camera_position[hand_type] = position
         return position
 
     def set_depth_source(self, source: str):
@@ -944,6 +945,8 @@ class HandTracker:
             self.socket_client.send("RECENTER:1")
         controller_type = str(self.config['network'].get('controller_type', 'touch'))
         for hand in tracked:
+            if not hand.data.is_sendable_pose():
+                continue  # the driver keeps the hand's last good pose
             self.socket_client.send(hand.data.to_protocol_string(controller_type, self.room_anchor))
         t_sent = time.perf_counter()
         self.last_timings = (t_frame, t_tracked, t_sent)
