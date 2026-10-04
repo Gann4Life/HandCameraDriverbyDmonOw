@@ -753,7 +753,8 @@ class HandTracker:
         scores: Dict[str, float] = {}
         if world is not None:
             features = compute_features(world, float(gesture_config['pinch_open']),
-                                        float(gesture_config['pinch_closed']))
+                                        float(gesture_config['pinch_closed']),
+                                        gesture_config.get('curl_open_deg'), gesture_config.get('curl_full_deg'))
             trigger_value, grip_value = self.control_mapper(hand_type, features, now)
             finger_curls = self.control_mapper.finger_curls(hand_type, features, now)
             scores = score_gestures(features, self.control_mapper.pinch_strength(features), gesture_config)
