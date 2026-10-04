@@ -34,13 +34,13 @@ Each layer may only import from the layers below it.
 
 | Layer | Modules | Knows about |
 |---|---|---|
-| Entry points | `app.py`, `Camera.py` `main()`, `tools/` | Everything below |
-| GUI | `gui/` | Engine, config, presets. Never MediaPipe or the socket directly |
-| Engine | `Camera.HandTracker`, `gui/tracker_worker.py` (thread wrapper) | Domain, I/O |
-| Domain | `hand_features`, `hand_controls`, `gesture_scores`, `hand_fit`, `hand_identity`, `hand_data` | Pure math and numpy. No Qt, no OpenCV windows, no sockets, no files |
-| Config | `config_defaults`, `presets`, `builtin_presets`, `utils/config_utils` | Plain dicts |
+| Entry points | `app.py`, `Camera.py` `main()`, `calibrate.py` (legacy), `tools/` | Everything below |
+| GUI | `gui/` (including `gui/environments.py`, which checks the add-ons) | Engine, config, presets, `addons`. Never MediaPipe or the socket directly |
+| Engine | `Camera.HandTracker`, `gui/tracker_worker.py` (thread wrapper), `depth_assist` | Config, domain, I/O |
+| Config | `config_defaults`, `presets`, `builtin_presets`, `utils/config_utils` | Plain dicts. `config_defaults` collects each domain module's own `DEFAULTS` |
+| Domain | `hand_features`, `hand_controls`, `gesture_scores`, `hand_fit`, `hand_identity`, `hand_data`, `gesture_detector` (legacy) | Pure math and numpy. No Qt, no OpenCV windows, no sockets, no files |
 | I/O and platform | `utils/camera_utils`, `utils/socket_client`, `utils/win_process`, `addons` | The outside world |
-| Utilities | `utils/one_euro`, `utils/hand_size` | Nothing project-specific |
+| Utilities | `utils/one_euro`, `utils/hand_size`, `version` | Nothing project-specific |
 
 Rules that follow from this:
 
@@ -49,7 +49,8 @@ Rules that follow from this:
 - **Both hands share one implementation.** State is keyed by hand; there is never a left and a right
   copy of the same logic. Differences between hands come from the data, not from code paths.
 - **Settings are data.** A new setting is one entry in `gui/settings_schema.py` plus its default in
-  the module that owns it; the GUI and live apply follow from that.
+  the module that owns it; the GUI and live apply follow from that. (Not yet true for settings that
+  rebuild something: see Known gaps.)
 - **Machine-local settings stay out of presets** (camera device, URLs, paths): presets ship as
   built-in defaults on every release.
 
@@ -124,11 +125,22 @@ Where the code doesn't follow this document yet. Each one becomes an issue; remo
 fixed.
 
 - `Camera.py` holds both the engine (`HandTracker`, ~900 lines: config loading, camera, pose, depth,
-  filters, drawing, CLI preview) and the command-line entry. It needs splitting by responsibility.
+  filters, drawing, CLI preview) and the command-line entry. It needs splitting by responsibility,
+  and `HandTracker` builds its own camera, MediaPipe model and socket instead of receiving them, so
+  none of its pose logic can be tested.
+- Defaults are repeated: `Camera.py` has about 25 `.get(key, default)` fallbacks that duplicate
+  `DEFAULT_CONFIG` (and `TrackingFrame.hfov_deg` another).
+- Which settings rebuild the camera, model or filters lives twice: `Camera.setting_action` (an
+  `if key.startswith` chain) and the `Apply` labels in `gui/settings_schema.py`.
+- The Index controller placement is corrected on both sides: `HandTracker.index_adjustment` (tuned
+  live, `network.index_*`) on top of a fixed Touch→Index transform in `controller_device_driver.cpp`.
+  One side should own it.
+- The socket's 5 s timeout also applies to `sendall` on the tracking thread, so a hung SteamVR can
+  stall tracking.
 - `gesture_detector.py` mixes quaternion math, legacy on/off gestures and handedness evidence. The
   quaternion helpers belong in a math module; the legacy gestures are superseded by `gesture_scores`.
 - `calibrate.py` is a standalone OpenCV script that predates the GUI.
 - The driver parses `GESTURE:` but ignores it, so gestures never reach the game.
 - The WiLoR depth experiment (`depth_assist.py`, `gui/environments.py`, its installer and add-on) is
   planned for removal.
-- Few automated tests; none for the driver.
+- No automated tests yet, for Python or the driver.
