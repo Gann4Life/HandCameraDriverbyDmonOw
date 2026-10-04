@@ -180,9 +180,7 @@ void HandTrackingListener::ListenThread()
 
 void HandTrackingListener::ProcessHandData( const std::string &data )
 {
-	// Parse protocol string: HAND:LEFT,X:0.5,Y:0.3,Z:-0.2,QW:1.0,QX:0.0,QY:0.0,QZ:0.0,TRIGGER:0.8,GRIP:0.0,GESTURE:POINT,
-	// TYPE:INDEX,CURL:0.10;0.20;0.30;0.40;0.50,ANCHOR:ROOM (TYPE, CURL and ANCHOR are newer; older trackers
-	// leave them out). A malformed line changes nothing.
+	// One line of docs/PROTOCOL.md. A malformed line changes nothing.
 	const std::optional<HandMessage> message = ParseHandMessage( data );
 	if ( !message )
 	{

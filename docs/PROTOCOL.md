@@ -34,7 +34,7 @@ previous value, and the line is not dropped.
 The driver validates the whole line before applying any of it, and drops the line (logging it once)
 when any field is malformed:
 
-- a number that isn't a plain decimal (empty, text, `nan`, `inf`, or out of float range);
+- a value that isn't a decimal number (empty, text, spaces, `nan`, `inf`, or out of float range);
 - part of a group: `X` without `Y` and `Z`, or some of `QW`..`QZ` without the rest;
 - a position coordinate beyond ±10 m, or a quaternion of length zero;
 - a `CURL` without exactly five values;
@@ -46,7 +46,7 @@ before sending too.
 
 | Key | Value | Sent | Meaning |
 |---|---|---|---|
-| `HAND` | `LEFT` / `RIGHT` | always | Which controller. Any other value drops the rest of the line |
+| `HAND` | `LEFT` / `RIGHT` | always | Which controller. Any other value drops the whole line |
 | `X`, `Y`, `Z` | float, metres, 4 decimals | always | Hand offset in OpenVR axes (x right, y up, -z forward), added to the headset's position and rotated by the headset's orientation, or by the room forward when `ANCHOR:ROOM` |
 | `QW`, `QX`, `QY`, `QZ` | float, unit quaternion | always | Hand rotation, in the same frame as the position |
 | `TRIGGER` | 0..1, 2 decimals | always | Analog trigger. Touch above 0.1; click with hysteresis 0.95 on / 0.85 off |

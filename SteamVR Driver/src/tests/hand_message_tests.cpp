@@ -1,5 +1,5 @@
 // Unit tests for the line parser (hand_message.h). No framework: each CHECK
-// prints the failing expression, and the exit code is the number of failures.
+// prints the failing expression, and the exit code is 1 when any failed.
 // Build and run: cmake --build <build> --config Release --target hand_message_tests,
 // then ctest --test-dir <build> -C Release.
 
@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -31,7 +32,14 @@ namespace
 	std::string With( const std::string &key, const std::string &value )
 	{
 		std::string line = kGood;
-		const size_t start = line.find( key + ":" ) + key.size() + 1;
+		const bool first = line.rfind( key + ":", 0 ) == 0;
+		const size_t field = first ? 0 : line.find( "," + key + ":" );
+		if ( field == std::string::npos )
+		{
+			std::printf( "test bug: no %s field in kGood\n", key.c_str() );
+			std::abort();
+		}
+		const size_t start = field + ( first ? 0 : 1 ) + key.size() + 1;
 		const size_t end = line.find( ',', start );
 		return line.replace( start, end == std::string::npos ? std::string::npos : end - start, value );
 	}
@@ -51,6 +59,18 @@ namespace
 		CHECK( m->trigger && Near( *m->trigger, 0.8f ) );
 		CHECK( m->grip && Near( *m->grip, 0.f ) );
 		CHECK( m->curls && Near( ( *m->curls )[ 0 ], 0.1f ) && Near( ( *m->curls )[ 4 ], 0.5f ) );
+	}
+
+	void TrackerNumberFormatsParse()
+	{
+		current_test = "TrackerNumberFormatsParse";
+		// hand_data.py writes negative zero as -0.0000 / -0.00
+		const auto m = ParseHandMessage( "HAND:RIGHT,X:-0.0000,Y:-0.0000,Z:-0.0000,QW:-1.0000,QX:-0.0000,QY:-0.0000,"
+			"QZ:-0.0000,TRIGGER:-0.00,GRIP:-0.00,GESTURE:UNKNOWN,TYPE:TOUCH,CURL:-0.00;-0.00;-0.00;-0.00;-0.00" );
+		CHECK( m && m->position && m->rotation && m->curls );
+		if ( !m ) return;
+		CHECK( Near( ( *m->rotation )[ 0 ], -1.f ) );
+		CHECK( Near( *m->trigger, 0.f ) && Near( *m->grip, 0.f ) );
 	}
 
 	void OlderTrackerLineStillWorks()
@@ -181,6 +201,15 @@ namespace
 		}
 	}
 
+	void SplitterLimitIsInclusive()
+	{
+		current_test = "SplitterLimitIsInclusive";
+		LineSplitter splitter;
+		const std::string longest( kMaxLineBytes, 'x' );
+		const auto lines = Split( splitter, longest + "\n" + longest + "\r\n" + longest + "y\n" + longest + "yy\nRECENTER:1\n" );
+		CHECK( lines.size() == 3 && lines[ 0 ] == longest && lines[ 1 ] == longest && lines[ 2 ] == "RECENTER:1" );
+	}
+
 	void SplitterDropsAnOverlongLineWhole()
 	{
 		current_test = "SplitterDropsAnOverlongLineWhole";
@@ -202,6 +231,7 @@ namespace
 int main()
 {
 	ParsesTheProtocolExample();
+	TrackerNumberFormatsParse();
 	OlderTrackerLineStillWorks();
 	MissingFieldsAreLeftOut();
 	Recenter();
@@ -215,7 +245,8 @@ int main()
 	UnknownKeysAreIgnored();
 	OverlongLineIsDropped();
 	SplitterJoinsLinesAcrossReads();
+	SplitterLimitIsInclusive();
 	SplitterDropsAnOverlongLineWhole();
 	std::printf( failures ? "%d check(s) failed\n" : "all checks passed\n", failures );
-	return failures;
+	return failures ? 1 : 0;
 }

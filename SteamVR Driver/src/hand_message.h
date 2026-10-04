@@ -37,8 +37,9 @@ constexpr float kMaxPositionM = 10.f;
 constexpr size_t kMaxLineBytes = 1024;
 
 // The message in one line (without its newline), or nothing when the line is
-// malformed: a bad number, NaN or infinity, a position out of range, a zero
-// quaternion, a CURL without exactly 5 values, or a HAND other than LEFT/RIGHT.
+// malformed: a bad number, NaN or infinity, an incomplete X/Y/Z or QW..QZ group,
+// a position out of range, a zero quaternion, a CURL without exactly 5 values,
+// or a HAND other than LEFT/RIGHT.
 std::optional< HandMessage > ParseHandMessage( std::string_view line );
 
 // Splits a TCP byte stream into lines. A line longer than kMaxLineBytes is

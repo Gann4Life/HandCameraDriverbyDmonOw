@@ -198,7 +198,7 @@ void LineSplitter::Feed( const char *data, size_t size, const std::function< voi
 				{
 					pending_.pop_back();
 				}
-				if ( !pending_.empty() )
+				if ( !pending_.empty() && pending_.size() <= kMaxLineBytes )
 				{
 					on_line( pending_ );
 				}
@@ -208,7 +208,8 @@ void LineSplitter::Feed( const char *data, size_t size, const std::function< voi
 		}
 		else if ( !discarding_ )
 		{
-			if ( pending_.size() >= kMaxLineBytes )
+			// One byte of slack for a "\r" before the newline
+			if ( pending_.size() > kMaxLineBytes )
 			{
 				// Too long to be a hand line: drop it up to its newline
 				pending_.clear();
