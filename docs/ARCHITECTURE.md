@@ -104,6 +104,9 @@ which trade-off was made and why.
 
 ## Testing
 
+Tests live in `tests/` (pytest). Install the dev requirements once with
+`python -m pip install -r requirements-dev.txt`, then run `python -m pytest -q` from the repo root.
+
 - Every bug fix starts with a test that reproduces it. Every feature ships with its tests in the same
   change.
 - Domain code gets unit tests; GUI code gets offscreen smoke tests (`QT_QPA_PLATFORM=offscreen`).
@@ -114,7 +117,7 @@ which trade-off was made and why.
 ## Workflow
 
 - Branches: `main` (releases), `dev` (pre-release). Every change gets its own branch from `dev`
-  (`feat/...`, `fix/...`, `docs/...`, `chore/...`) and merges back into `dev` with `--no-ff`. Only
+  (`feat/...`, `fix/...`, `docs/...`, `chore/...`, `test/...`, `refactor/...`) and merges back into `dev` with `--no-ff`. Only
   `dev` merges into `main`.
 - Conventional Commits.
 - Before merging into `dev`: tests pass, the code review and the docs update are done.
@@ -143,4 +146,6 @@ fixed.
 - The driver parses `GESTURE:` but ignores it, so gestures never reach the game.
 - The WiLoR depth experiment (`depth_assist.py`, `gui/environments.py`, its installer and add-on) is
   planned for removal.
-- No automated tests yet, for Python or the driver.
+- Tests cover only part of the domain code so far (`hand_features`, `hand_controls`, `gesture_scores`,
+  `utils/one_euro`, `HandData.to_protocol_string`). There are no GUI smoke tests, recorded-clip tests
+  or driver tests yet.
