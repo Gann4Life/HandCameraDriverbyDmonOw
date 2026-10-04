@@ -70,6 +70,28 @@ def test_trigger_and_grip_are_sent_between_zero_and_one(value, expected):
     assert (sent["TRIGGER"], sent["GRIP"]) == (expected, expected)
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_curls_are_sent_as_zero(bad):
+    # The driver drops a whole line with a non-finite number, trigger and grip with it
+    curl = fields(hand(curls=(0.5, bad, 0.5, 0.5, 0.5)).to_protocol_string())["CURL"]
+    assert curl.split(";") == ["0.50", "0.00", "0.50", "0.50", "0.50"]
+
+
+@pytest.mark.parametrize("position, rotation", [
+    ((0.1, float("nan"), -0.4), (1.0, 0.0, 0.0, 0.0)),
+    ((0.1, float("-inf"), -0.4), (1.0, 0.0, 0.0, 0.0)),
+    ((0.1, 0.2, -10.5), (1.0, 0.0, 0.0, 0.0)),
+    ((0.1, 0.2, -0.4), (float("inf"), 0.0, 0.0, 0.0)),
+    ((0.1, 0.2, -0.4), (0.0, 0.0, 0.0, 0.0)),
+    ((0.1, 0.2, -0.4), (0.00004, 0.0, 0.0, 0.0)),  # zero with 4 decimals
+])
+def test_a_pose_the_driver_would_drop_is_not_sendable(position, rotation):
+    assert hand().is_sendable_pose()
+    data = hand()
+    data.position, data.rotation = position, rotation
+    assert not data.is_sendable_pose()
+
+
 def test_one_line_without_the_terminator():
     # The socket client adds the "\n" that ends each message
     assert "\n" not in hand(curls=(0.1,) * 5).to_protocol_string("index", room_anchor=True)

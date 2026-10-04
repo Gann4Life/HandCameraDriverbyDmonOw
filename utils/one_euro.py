@@ -14,6 +14,10 @@ def _alpha(cutoff_hz: float, dt: float) -> float:
     return 1.0 / (1.0 + tau / dt)
 
 
+def _all_finite(value: Sequence[float]) -> bool:
+    return all(math.isfinite(v) for v in value)
+
+
 class OneEuroFilter:
     """
     One Euro filter over a fixed-length vector. All components share one
@@ -54,9 +58,13 @@ class OneEuroFilter:
             t: Its timestamp in seconds
 
         Returns:
-            Filtered value
+            Filtered value. A sample with NaN or infinity is ignored: the last output is
+            returned, or the sample itself when there is none yet.
         """
         value = tuple(float(v) for v in value)
+        if not _all_finite(value):
+            # Kept in the history, it would poison every output until the next reset
+            return self._value if self._value is not None else value
         # First sample, a long gap, or a non-increasing timestamp: start over
         if self._time is None or not 0.0 < t - self._time <= self.reset_after:
             self._value, self._speed, self._time = value, 0.0, t
@@ -94,6 +102,8 @@ class ExponentialFilter:
 
     def __call__(self, value: Sequence[float], t: float) -> Tuple[float, ...]:
         value = tuple(float(v) for v in value)
+        if not _all_finite(value):
+            return self._value if self._value is not None else value
         if self._time is None or not 0.0 < t - self._time <= self.reset_after:
             self._value = value
         else:
@@ -106,6 +116,8 @@ class QuaternionExponentialFilter(ExponentialFilter):
     """ExponentialFilter for unit quaternions (qw, qx, qy, qz)."""
 
     def __call__(self, q: Sequence[float], t: float) -> Tuple[float, ...]:
+        if not _all_finite(q):
+            return super().__call__(q, t)  # ignored, history untouched
         if self._value is not None and sum(a * b for a, b in zip(q, self._value)) < 0.0:
             q = tuple(-c for c in q)
         filtered = super().__call__(q, t)
@@ -125,6 +137,8 @@ class QuaternionOneEuroFilter(OneEuroFilter):
     """One Euro filter for unit quaternions (qw, qx, qy, qz)."""
 
     def __call__(self, q: Sequence[float], t: float) -> Tuple[float, ...]:
+        if not _all_finite(q):
+            return super().__call__(q, t)  # ignored, history untouched
         # q and -q are the same rotation; keep the sample on the same side as
         # the history so the filter does not average across the sign flip
         if self._value is not None and sum(a * b for a, b in zip(q, self._value)) < 0.0:
