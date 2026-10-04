@@ -33,6 +33,11 @@ class TrackerWorker(QThread):
         self._lock = threading.Lock()
         self._latest: Optional[TrackingFrame] = None
         self._sequence = 0
+        self._recenter = threading.Event()
+
+    def recenter(self):
+        """Tell the driver the user is facing the camera now (hands following the room)."""
+        self._recenter.set()
 
     def latest(self) -> Tuple[int, Optional[TrackingFrame]]:
         """The newest frame and its sequence number, to skip frames already shown."""
@@ -63,6 +68,9 @@ class TrackerWorker(QThread):
         try:
             while self._running:
                 self._apply_pending(tracker)
+                if self._recenter.is_set():
+                    self._recenter.clear()
+                    tracker.recenter_requested = True
                 frame = tracker.step()
                 if tracker.changed_by_tracker:
                     self.settings_applied.emit(tracker.changed_by_tracker)

@@ -106,6 +106,11 @@ public:
 	void UpdateGripValue( float value );
 	// thumb, index, middle, ring, pinky; 0 straight .. 1 fully curled
 	void UpdateFingerCurls( const std::array< float, 5 > &curls );
+	// The hand's offset turns with the headset (a camera that sees where you look), or stays
+	// facing a camera fixed in the room, at room_yaw radians about +Y from the tracking
+	// space's forward
+	void SetRoomAnchor( bool room );
+	void SetRoomYaw( float room_yaw );
 
 private:
 	void CreateTouchComponents( vr::PropertyContainerHandle_t container );
@@ -138,6 +143,8 @@ private:
 	std::atomic< float > trigger_value_;
 	std::atomic< float > grip_value_;
 	std::array< std::atomic< float >, 5 > finger_curls_;
+	std::atomic< bool > room_anchor_{ false };
+	std::atomic< float > room_yaw_{ 0.f };
 
 	bool trigger_clicked_ = false;
 };

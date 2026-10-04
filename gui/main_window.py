@@ -35,6 +35,7 @@ from version import APP_VERSION
 
 APP_TITLE = "Hand Camera Driver"
 REFRESH_MS = 16  # preview refresh, independent of the tracking rate
+RECENTER_DELAY_S = 3
 
 
 def _shared(setting: Setting) -> bool:
@@ -123,6 +124,11 @@ class MainWindow(QMainWindow):
         self.depth_action.setToolTip("Heavy 3D hand model for steadier depth (experimental)")
         self.depth_action.triggered.connect(lambda checked: self.set_setting(
             "tracking.depth_source", "wilor" if checked else "mediapipe"))
+        recenter_action = QAction("Recenter hands", self)
+        recenter_action.setShortcut(QKeySequence("R"))
+        recenter_action.setToolTip(f"With Hands follow: The room. In {RECENTER_DELAY_S} seconds, the direction "
+                                   "your headset faces becomes where the camera is: face it (R)")
+        recenter_action.triggered.connect(lambda: self._recenter_countdown(RECENTER_DELAY_S))
         addons_action = QAction("Add-ons", self)
         addons_action.setToolTip("Install or update the SteamVR driver and WiLoR depth")
         addons_action.triggered.connect(lambda: self.show_addons())
@@ -132,7 +138,7 @@ class MainWindow(QMainWindow):
         discard_action = QAction("Discard preset changes", self)
         discard_action.triggered.connect(self.preset_bar.discard)
 
-        for action in (self.start_action, swap_action, self.depth_action):
+        for action in (self.start_action, swap_action, recenter_action, self.depth_action):
             toolbar.addAction(action)
         toolbar.addSeparator()
         toolbar.addAction(addons_action)
@@ -152,6 +158,18 @@ class MainWindow(QMainWindow):
         landmarks = QAction("Hand skeleton on camera", self, checkable=True, checked=True)
         landmarks.toggled.connect(self._set_show_landmarks)
         view_menu.addAction(landmarks)
+
+    def _recenter_countdown(self, seconds: int):
+        """Leave time to put the headset on and face the camera, then recenter."""
+        if self.worker is None:
+            self.statusBar().showMessage("Start tracking first.", 3000)
+            return
+        if seconds > 0:
+            self.statusBar().showMessage(f"Face the camera with your headset: recentering in {seconds}...")
+            QTimer.singleShot(1000, lambda: self._recenter_countdown(seconds - 1))
+            return
+        self.worker.recenter()
+        self.statusBar().showMessage("Hands recentered on the camera.", 3000)
 
     def set_setting(self, key: str, value):
         """Change a setting as if edited in its panel, e.g. from a toolbar button."""

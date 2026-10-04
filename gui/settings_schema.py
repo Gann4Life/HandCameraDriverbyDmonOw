@@ -93,6 +93,13 @@ SETTINGS = (
             help="How the picture maps to your hands. Part of the preset: for a camera somewhere else, "
                  "duplicate a preset and change it there. On your head or chest, the camera sees the backs "
                  "of your hands, which is harder to track: keep Rebuild hands in 3D on (Depth) there."),
+    Setting("tracking.hands_follow", "Hands follow", "choice", "View",
+            choices=(("head", "My head: look at the camera to use them"),
+                     ("room", "The room: the camera stays put while I look around")),
+            help="Only for a camera in front of you. With The room, hands keep their place when you turn your "
+                 "head. The camera is taken to be where you look when your hands first show up; if the hands "
+                 "come out turned, use Recenter hands (R) and face the camera. They still move with you when "
+                 "you walk, and turn with your game's snap turn."),
     Setting("camera.facing_distance", "Distance to camera", "float", "View", minimum=0.2, maximum=3.0,
             step=0.05, unit=" m", help="Only for a camera in front of you."),
     Setting("tracking.swap_hands", "Swap left and right", "bool", "View",

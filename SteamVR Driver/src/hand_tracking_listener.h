@@ -44,6 +44,8 @@ private:
 	void ListenThread();
 	void ProcessHandData( const std::string &data );
 	std::map<std::string, std::string> ParseProtocolString( const std::string &data );
+	// Where the headset looks now becomes the direction of a camera fixed in the room
+	void CaptureRoomForward();
 
 	MyControllerDeviceDriver *left_controller_;
 	MyControllerDeviceDriver *right_controller_;
@@ -51,6 +53,7 @@ private:
 	// -1 until the first message, then a ControllerProfile
 	std::atomic<int> requested_profile_{ -1 };
 	bool warned_profile_change_ = false;
+	bool room_forward_set_ = false;
 
 	std::atomic<bool> is_running_;
 	std::thread listen_thread_;
