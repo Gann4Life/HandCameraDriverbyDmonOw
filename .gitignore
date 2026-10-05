@@ -87,3 +87,6 @@ tmp/
 # Local planning notes, never versioned
 PLAN.md
 TODO.md
+
+# Session recordings (the camera sees the user and their room)
+.output/

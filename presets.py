@@ -41,7 +41,7 @@ SHARED_KEYS = (
     "camera.hfov_deg", "camera.stall_timeout", "camera.reconnect_timeout",
     "tracking.max_hands", "tracking.detection_confidence", "tracking.tracking_confidence",
     "tracking.model_complexity", "tracking.depth_source", "tracking.depth_assist.",
-    "network.", "process.", "debug.", "addons.",
+    "network.", "process.", "debug.", "addons.", "recording.",
 )
 # Settings that used to be shared: presets saved before take the value in use
 FORMERLY_SHARED = ("calibration.rotation_offset_deg.left", "calibration.rotation_offset_deg.right")

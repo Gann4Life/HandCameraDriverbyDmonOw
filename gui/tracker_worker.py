@@ -13,6 +13,7 @@ from PySide6.QtCore import QThread, Signal
 
 from Camera import CameraLostError, HandTracker
 from hand_data import TrackingFrame
+from session_recorder import SessionRecorder
 
 
 class TrackerWorker(QThread):
@@ -34,6 +35,8 @@ class TrackerWorker(QThread):
         self._latest: Optional[TrackingFrame] = None
         self._sequence = 0
         self._recenter = threading.Event()
+        # Set from the GUI; the recorder is thread-safe and ignores frames once stopped
+        self.recorder: Optional[SessionRecorder] = None
 
     def recenter(self):
         """Tell the driver the user is facing the camera now (hands following the room)."""
@@ -73,10 +76,14 @@ class TrackerWorker(QThread):
                     tracker.recenter_requested = True
                 frame = tracker.step()
                 if tracker.changed_by_tracker:
+                    self._record_settings(tracker.changed_by_tracker)
                     self.settings_applied.emit(tracker.changed_by_tracker)
                     tracker.changed_by_tracker = {}
                 if frame is None:
                     continue
+                recorder = self.recorder
+                if recorder is not None:
+                    recorder.add_frame(frame, tracker.last_timings[0])
                 with self._lock:
                     self._latest = frame
                     self._sequence += 1
@@ -100,7 +107,15 @@ class TrackerWorker(QThread):
         if not changes:
             return
         try:
-            self.settings_applied.emit(tracker.apply_settings(changes))
+            effective = tracker.apply_settings(changes)
         except Exception as e:
             traceback.print_exc()
             print(f"Could not apply {', '.join(changes)}: {e}")
+            return
+        self._record_settings(effective)
+        self.settings_applied.emit(effective)
+
+    def _record_settings(self, changes: Dict[str, Any]):
+        recorder = self.recorder
+        if recorder is not None:
+            recorder.settings_changed(changes)
