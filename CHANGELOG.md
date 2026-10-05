@@ -16,10 +16,14 @@ What changed for users in each version. The format follows
   curl range to the active preset's view.
 - **Keep lost hands moving for** setting (Smoothing, saved per preset, 0.3 s by default, 0 turns it
   off). A hand lost on a fast move (motion blur, a dropout) used to freeze where it was last seen and
-  jump when found again. Now it keeps going the way it was moving and slows to a stop. A hand that
-  leaves the picture stops sooner, and one that was barely moving stays put. When the hand is found
-  again, it blends to its real pose over 0.1 s. Fingers, trigger, grip and gesture stay as they were
-  while the hand is lost. This is not tested in VR yet.
+  jump when found again. Now it carries on along the curve it was on: a swing keeps turning, and a
+  hand that was slowing keeps slowing. It holds full speed briefly, then eases to a stop. Its
+  rotation keeps turning too. Toward or away from the camera it only carries on when several
+  frames agree, so a punch carries on but a misread depth doesn't. A wrist that jumps across the
+  picture for one frame (a misdetection, or the hands swapped) is ignored. A hand that leaves the
+  picture stops sooner, and one that was barely moving stays put. When the hand is found again, it blends to its real pose over 0.1 s.
+  Fingers, trigger, grip and gesture stay as they were while the hand is lost. This is not tested
+  in VR yet.
 - **Session recording** (toolbar **Record** or F9): saves the camera video and, next to it, a data
   file with what the tracker made of every frame, to the `.output` folder next to the app. Use it to
   study a problem or replay it later. **File > Record the camera video** (on by default) turns the
