@@ -14,10 +14,13 @@ What changed for users in each version. The format follows
   tilt the hands.
 - **Calibrate gestures** (toolbar): records your open hand and your fist and fits each finger's
   curl range to the active preset's view.
-- **Steady grip** and **Steady trigger** (Gestures): grabbing and letting go need a clear gap, so a
-  value near the game's threshold no longer grabs and drops. Off by default.
 
 ### Changed
+- The grip now holds by itself. Once it reaches **Grip holds from**, it keeps its peak until it
+  stays under **Grip lets go below** for 0.1 s, so a value near the game's threshold no longer
+  grabs and drops. Below **Grip holds from** the grip is analog, and the trigger is always analog. This replaces the
+  **Steady grip** and **Steady trigger** settings (they snapped to 0 or 1 and dropped quick
+  pinches). Saved presets lose the old switches on their own.
 - The app and the SteamVR driver now greet each other with a protocol version when they connect. The
   driver refuses a connection that doesn't greet within 1 s, isn't from the app (another program, a
   browser), or has a different version, and logs why. If you update only one side, the log says which
@@ -42,6 +45,10 @@ What changed for users in each version. The format follows
   Before, it could inherit the smoothing, trigger, grip and gesture of whatever that side held
   before, so a grip or gesture could survive a lost hand. A fast move alone doesn't reset anything,
   so a held grip survives a quick swing.
+- In POV with the palm toward the camera, **Rebuild hands in 3D** could stay stuck with the index
+  curled after the finger opened, so an open hand pulled the trigger to about half. The rebuild
+  now also tries a start from MediaPipe's finger bends when its own fit disagrees with them by a
+  lot. Not fully fixed: a blurred, fast-moving open hand can still give a short pinch spike.
 - The driver could crash SteamVR when it shut down while the app was connected.
 - The driver used to stop listening for good after one failed connection. Now it keeps listening.
 - Hand position and rotation could be out of step for a frame.

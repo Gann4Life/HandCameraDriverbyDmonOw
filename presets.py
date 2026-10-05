@@ -281,11 +281,19 @@ def _retire_everywhere(config: Dict[str, Any]) -> None:
 
 
 def _remove_keys(config: Dict[str, Any]) -> None:
-    """Format 5: REMOVED_KEYS go from the config in use and from every saved preset."""
+    """
+    Format 5: REMOVED_KEYS go from the config in use and from every saved
+    preset; a built-in preset left as shipped is then no longer stored.
+    """
     for key in REMOVED_KEYS:
         remove_value(config, key)
         for saved in stored(config).values():
             saved.pop(key, None)
+    _drop_unchanged_builtins(config)
+
+
+def _drop_unchanged_builtins(config: Dict[str, Any]) -> None:
+    """Stop storing built-in presets that match their defaults, so they follow future defaults (see store)."""
     for builtin in BUILTIN_PRESETS:
         if stored(config).get(builtin) == default_values(builtin):
             stored(config).pop(builtin)
@@ -300,8 +308,7 @@ def _forget_retired_defaults(config: Dict[str, Any]) -> None:
         for key, old in RETIRED_DEFAULTS.items():
             if saved.get(key) == old:
                 saved[key] = default_values(builtin)[key]
-        if saved == default_values(builtin):
-            stored(config).pop(builtin)
+    _drop_unchanged_builtins(config)
     name = active(config)
     if is_builtin(name):
         for key, old in RETIRED_DEFAULTS.items():

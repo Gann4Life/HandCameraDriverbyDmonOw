@@ -52,3 +52,13 @@ def test_a_config_from_before_presets_also_moves_the_old_switch_frames():
     config.pop("presets", None)
     presets.migrate(config)
     assert get_value(config, KEY) == get_value(DEFAULT_CONFIG, KEY)
+
+
+def test_a_config_from_before_presets_also_loses_the_steady_switches():
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    set_value(config, "gestures.grip_latch", True)
+    config.pop("preset", None)
+    config.pop("presets", None)
+    presets.migrate(config)
+    assert get_value(config, "gestures.grip_latch") is None
+    assert all("gestures.grip_latch" not in saved for saved in config["presets"].values())

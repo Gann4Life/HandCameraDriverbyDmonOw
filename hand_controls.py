@@ -38,7 +38,8 @@ DEFAULTS = {
 PINCH_GATE_FADE = 0.15
 
 # How long a held grip must stay below latch_off before it lets go: longer than
-# a few misread frames, short enough that opening the hand feels immediate
+# a few misread frames, short enough that opening the hand feels immediate.
+# The "Grip lets go below" help in gui/settings_schema.py names this time.
 GRIP_RELEASE_SECONDS = 0.1
 
 
@@ -102,7 +103,8 @@ class ControlMapper:
                 self._grip_holds[hand_type] = _GripHold(grip)
             return grip
         hold.peak = max(hold.peak, grip)
-        if grip >= float(self.config["latch_off"]):
+        # A release value set above the hold value would grab and drop over and over
+        if grip >= min(float(self.config["latch_off"]), float(self.config["latch_on"])):
             hold.below_since = None
         elif hold.below_since is None:
             hold.below_since = t

@@ -16,14 +16,14 @@ OBSERVED = [[830.4, 323.8], [871.4, 293.1], [891.5, 264.1], [898.0, 234.7], [896
             [722.6, 261.2], [706.5, 246.4], [697.7, 233.2]]
 PREVIOUS = [2.14, -0.2, -0.166, 0.245, 0.039, 0.47, -0.473, -0.241, 0.308, 0.344, 0.145, 0.309, 0.866, 0.831,
             0.327, 0.078, 0.016, 0.048, 0.271, 0.094, 0.577, 0.475, 0.325, 0.35, 0.287, 0.282]
-BENDS = [0.0, 0.0, 0.229, 0.366, 0.279, 0.0, 0.068, 0.34, 0.484, 0.0, 0.269, 0.359, 0.327, 0.0, 0.188, 0.126,
-         0.162, 0.0, 0.257, 0.431]
+MEDIAPIPE_BENDS = [0.0, 0.0, 0.229, 0.366, 0.279, 0.0, 0.068, 0.34, 0.484, 0.0, 0.269, 0.359, 0.327, 0.0,
+                   0.188, 0.126, 0.162, 0.0, 0.257, 0.431]
 
 
 def index_curl_after_warm_fit() -> float:
     fitter = HandFitter(HandShape.default(), FOCAL, CENTRE)
-    fit = fitter.fit(np.array(OBSERVED), True, np.array(PREVIOUS), palm_away=True, bends=np.array(BENDS),
-                     allow_refresh=False)
+    fit = fitter.fit(np.array(OBSERVED), True, np.array(PREVIOUS), palm_away=True,
+                     bends=np.array(MEDIAPIPE_BENDS), allow_refresh=False)
     return compute_features(fit.points - fit.points[PALM].mean(axis=0)).curl[1]
 
 

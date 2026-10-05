@@ -59,17 +59,18 @@ def test_grip_holds_its_peak_until_it_stays_below_the_release_value():
         (between, between),  # below latch_on: analog, nothing held
         (on + 0.1, on + 0.1),  # holds from here
         (between, on + 0.1),  # back between the thresholds: still the peak
-        (0.0, on + 0.1),  # one misread frame: still held
-        (0.0, 0.0),  # below latch_off for longer: lets go
+        (0.0, on + 0.1),  # first frame below latch_off: still held
+        (0.0, on + 0.1),  # below for less than the release wait: still held
+        (0.0, 0.0),  # below for longer: lets go
     ]
-    # Apart enough for no smoothing, except the last: the same value again, a release wait later
-    times = [0.0, 1.0, 2.0, 3.0, 3.0 + GRIP_RELEASE_SECONDS]
+    # Apart enough for no smoothing until the value drops; after that it stays 0, so smoothing can't matter
+    times = [0.0, 1.0, 2.0, 3.0, 3.0 + GRIP_RELEASE_SECONDS / 2, 3.0 + 1.5 * GRIP_RELEASE_SECONDS]
     for i, ((value, expected), t) in enumerate(zip(steps, times)):
         _, grip = mapper("right", features(curl=grip_curls(value)), t * NO_SMOOTHING_STEP_S)
         assert grip == pytest.approx(expected), f"step {i}: grip {value:.2f}"
 
 
-def test_a_short_dip_does_not_restart_the_release_wait():
+def test_rising_above_the_release_value_restarts_the_release_wait():
     mapper = ControlMapper({})
     mapper("right", features(curl=grip_curls(1.0)), 0.0)
     mapper("right", features(curl=grip_curls(0.0)), 1.0)
