@@ -12,7 +12,7 @@ import math
 import sys
 import time
 import numpy as np
-from typing import Any, Callable, Dict, List, Tuple, Optional
+from typing import Any, Callable, Dict, List, Set, Tuple, Optional
 from hand_data import HAND_CONNECTIONS, HandData, TrackedHand, TrackingFrame, protocol_greeting
 from hand_features import compute_features
 from hand_controls import ControlMapper
@@ -231,7 +231,7 @@ class HandTracker:
         memory = float(self.config['tracking'].get('identity', {}).get('memory_seconds', 0.4))
         return max(memory, prediction_horizon(self.config['calibration']['prediction_seconds']))
 
-    def configure_prediction(self):
+    def configure_prediction(self) -> None:
         """(Re)create the motion predictor that keeps lost hands moving (hand_motion)."""
         self.motion = MotionPredictor(self.config['calibration']['prediction_seconds'])
         # The last tracked frame of each hand, whose fingers and controls a predicted hand keeps
@@ -774,8 +774,11 @@ class HandTracker:
             rotation = self.rotation_filters[hand_type](rotation, now)
         else:
             rotation = (1.0, 0.0, 0.0, 0.0)
-        # A hand found again after a prediction blends in from where it was predicted
-        camera_position, rotation = self.motion.observe(hand_type, now, camera_position, rotation, landmarks[0][:2])
+        if world is not None:
+            # A hand found again after a prediction blends in from where it was predicted.
+            # Without world landmarks the rotation is a placeholder, not part of any motion.
+            camera_position, rotation = self.motion.observe(hand_type, now, camera_position, rotation,
+                                                            landmarks[0][:2])
         # The joints follow the filtered wrist, so the 3D preview shows what is sent
         camera_points = fitted - fitted[0] + np.array(camera_position) if fitted is not None else None
         position, rotation = self.driver_pose(hand_type, camera_position, rotation)
@@ -814,7 +817,8 @@ class HandTracker:
                            features=features, gesture_scores=scores)
 
     def driver_pose(self, hand_type: str, camera_position: Tuple[float, float, float],
-                    rotation: Tuple[float, float, float, float]):
+                    rotation: Tuple[float, float, float, float]
+                    ) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]:
         """
         The pose sent to the driver for a camera-space wrist and a hand rotation
         already in headset space: the calibration, then the Index adjustment.
@@ -895,7 +899,8 @@ class HandTracker:
 
         return (dist1 + dist2 + dist3) / 3.0
 
-    def draw_landmarks(self, frame, landmarks: List[Tuple[float, float, float]], color=(255, 0, 0)):
+    def draw_landmarks(self, frame, landmarks: List[Tuple[float, float, float]],
+                       color: Tuple[int, int, int] = (255, 0, 0)):
         """
         Draw a hand's skeleton on the frame.
 
@@ -1014,7 +1019,9 @@ class HandTracker:
                 hand = self.process_hand_landmarks(hand_landmarks, hand_world, sides[i],
                                                    frame.shape[1], frame.shape[0])
                 tracked.append(hand)
-                self.last_tracked[sides[i]] = hand
+                if hand.features is not None and hand.data.is_sendable_pose():
+                    # What a prediction starts from, if the hand is lost next
+                    self.last_tracked[sides[i]] = hand
                 if self.debug['log_gestures']:
                     print(f"{hand.data.hand_type}: {hand.data.gesture} "
                           f"T:{hand.data.trigger_value:.2f} G:{hand.data.grip_value:.2f}")
@@ -1046,7 +1053,7 @@ class HandTracker:
             hfov_deg=self.hfov_deg,
         )
 
-    def predict_lost_hands(self, seen: set, now: float) -> List[TrackedHand]:
+    def predict_lost_hands(self, seen: Set[str], now: float) -> List[TrackedHand]:
         """
         Keep each hand lost this frame moving along its path for a while
         (hand_motion), instead of freezing it until it is found again.

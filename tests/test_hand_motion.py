@@ -125,11 +125,20 @@ def test_a_hand_leaving_the_picture_eases_to_a_stop_instead_of_continuing():
     assert 0.0 < near_edge < 0.5 * in_middle
 
 
-def test_a_hand_found_again_blends_from_where_it_was_predicted():
+def moving_hand(speed=0.5):
+    """A predictor that tracked a hand moving right at speed m/s; and the time of its last frame."""
     predictor = MotionPredictor(0.3)
-    last = track(predictor, [(0.5 * i / FPS, 0.0, -0.4) for i in range(5)])
-    predicted = predictor.predict("left", last + 2 / FPS)
+    return predictor, track(predictor, [(speed * i / FPS, 0.0, -0.4) for i in range(5)])
+
+
+def test_a_hand_found_again_blends_from_where_it_was_predicted():
+    predictor, last = moving_hand()
+    predictor.predict("left", last + 1 / FPS)
+    predictor.predict("left", last + 2 / FPS)
     found_at = last + 3 / FPS
+    # Where it would have been shown on the frame it is found: the blend starts there, no stall
+    twin, _ = moving_hand()
+    predicted = twin.predict("left", found_at)
     measured = (predicted.camera_position[0] + 0.1, 0.0, -0.4)
     turned = quat_from_rotation_vector(np.array((0.0, 0.0, math.radians(30))))
 
@@ -146,6 +155,31 @@ def test_a_hand_found_again_blends_from_where_it_was_predicted():
     assert turned_deg(after_rotation) == pytest.approx(30.0)
 
 
+def test_a_hand_lost_again_while_blending_in_carries_on_from_where_it_was_shown():
+    # Motion blur often gives one detection between lost frames
+    predictor, last = moving_hand(speed=1.0)
+    for i in range(1, 4):
+        predictor.predict("left", last + i / FPS)
+    found_at = last + 4 / FPS
+    measured = (predictor.predict("left", found_at - 1e-6).camera_position[0] + 0.1, 0.0, -0.4)
+    predictor, last = moving_hand(speed=1.0)
+    for i in range(1, 4):
+        predictor.predict("left", last + i / FPS)
+    sent, _ = predictor.observe("left", found_at, measured, IDENTITY, (0.9, 0.5))
+    again = predictor.predict("left", found_at + 1 / FPS)
+    # One frame of motion: the measurement 10 cm ahead says the hand is faster than
+    # predicted, so a little more than 1 m/s, but no snap to the measurement
+    assert np.linalg.norm(again.camera_position - np.array(sent)) < 0.05
+    assert again.camera_position[0] > sent[0]  # still moving the way it was shown moving
+
+
+def test_a_hand_lost_while_barely_moving_does_not_turn_either():
+    predictor = MotionPredictor(0.3)
+    rotations = [quat_from_rotation_vector(np.array((0.0, math.radians(5) * i, 0.0))) for i in range(5)]
+    last = track(predictor, [(0.0, 0.0, -0.4)] * 5, rotations=rotations)
+    assert turned_deg(predictor.predict("left", last + 0.2).rotation) == pytest.approx(20.0, abs=1e-6)
+
+
 def test_a_forgotten_hand_starts_clean():
     predictor = MotionPredictor(0.3)
     last = track(predictor, [(0.5 * i / FPS, 0.0, -0.4) for i in range(5)])
@@ -160,7 +194,7 @@ def test_a_turning_hand_keeps_turning_but_never_more_than_the_cap():
     predictor = MotionPredictor(1.0)
     step = math.radians(20)  # 600 degrees a second about Y: 60 more before it slows to a stop
     rotations = [quat_from_rotation_vector(np.array((0.0, step * i, 0.0))) for i in range(5)]
-    last = track(predictor, [(0.0, 0.0, -0.4)] * 5, rotations=rotations)
+    last = track(predictor, [(0.5 * i / FPS, 0.0, -0.4) for i in range(5)], rotations=rotations)
     soon = predictor.predict("left", last + 1 / FPS).rotation
     extra = turned_deg(soon) - math.degrees(step * 4)
     assert 0.0 < extra < 20.0

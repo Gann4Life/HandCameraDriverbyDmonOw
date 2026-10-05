@@ -216,10 +216,17 @@ class HandIdentityTracker:
         Move a lost hand's track to where the hand is predicted to be (see
         hand_motion), so the hand found there again is the same one. The track's
         time stays its last sighting: how long it is remembered doesn't change.
+        A prediction running onto the other hand, still in view, leaves the track
+        where it was: the visible hand must not be taken for the lost one.
         """
         track = self._tracks.get(side)
-        if track is not None:
-            track.wrist = (float(wrist[0]), float(wrist[1]))
+        if track is None:
+            return
+        wrist = (float(wrist[0]), float(wrist[1]))
+        other = self._tracks.get(other_side(side))
+        if other is not None and other.time > track.time and self._distance(wrist, other.wrist) <= self.continuity_radius:
+            return
+        track.wrist = wrist
 
     def has_track(self, side: str) -> bool:
         """

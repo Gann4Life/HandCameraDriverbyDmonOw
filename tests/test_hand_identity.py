@@ -176,11 +176,11 @@ def test_a_lost_hand_followed_to_its_predicted_place_is_found_there():
     # look like it came from the right hand's track: new, and reset
     def run(follow: bool):
         tracker = HandIdentityTracker()
-        frames(tracker, [det(0, x=0.3, evidence=LEFT_VOTE), det(1, x=0.65, evidence=RIGHT_VOTE)])
-        tracker.assign([det(1, x=0.65, evidence=RIGHT_VOTE)], 1.0)
+        frames(tracker, [det(0, x=0.3, evidence=LEFT_VOTE), det(1, x=0.75, evidence=RIGHT_VOTE)])
+        tracker.assign([det(1, x=0.75, evidence=RIGHT_VOTE)], 1.0)
         if follow:
             tracker.follow("left", (0.55, 0.5))
-        sides = tracker.assign([det(0, x=0.57, evidence=0.0), det(1, x=0.65, evidence=RIGHT_VOTE)], 1.1)
+        sides = tracker.assign([det(0, x=0.62, evidence=0.0), det(1, x=0.75, evidence=RIGHT_VOTE)], 1.1)
         return sides, tracker.new_sides
 
     assert run(follow=False)[1] == {"left"}
@@ -201,3 +201,12 @@ def test_a_lone_hand_changing_side_drops_its_old_track():
     assert tracker.has_track("left")
     frames(tracker, [det(x=0.5, evidence=RIGHT_VOTE)], start=1.0, count=5)
     assert tracker.has_track("right") and not tracker.has_track("left")
+
+
+def test_a_prediction_running_onto_the_visible_hand_leaves_the_lost_track_where_it_was():
+    tracker = HandIdentityTracker()
+    frames(tracker, [det(0, x=0.3, evidence=LEFT_VOTE), det(1, x=0.7, evidence=RIGHT_VOTE)])
+    tracker.assign([det(1, x=0.7, evidence=RIGHT_VOTE)], 1.0)
+    tracker.follow("left", (0.68, 0.5))
+    # The right hand, alone in view, keeps its side
+    assert tracker.assign([det(1, x=0.7, evidence=0.0)], 1.05) == {1: "right"}

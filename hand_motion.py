@@ -15,7 +15,7 @@ finite end point, so a prediction always comes to rest.
 """
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -38,8 +38,9 @@ POSITION_DAMPING_SECONDS = 0.2
 DEPTH_DAMPING_SECONDS = 0.05
 ROTATION_DAMPING_SECONDS = 0.1
 LEAVING_DAMPING_SECONDS = 0.05
-# A hand lost while its wrist crosses the picture slower than this (picture
-# widths per second) holds still: its speed would be mostly noise, and on the
+# A hand lost while its wrist crosses the picture slower than this (in picture
+# sizes per second: widths across, heights down) holds still, turning included:
+# its speed would be mostly noise, and on the
 # recorded clips moving it ended further from where it was found than holding.
 MIN_IMAGE_SPEED = 0.5
 # Faster than a hand moves through a gap: a depth misread, not motion
@@ -76,7 +77,9 @@ class _Sample:
 @dataclass
 class _Motion:
     """A lost hand's fitted motion, from its last tracked sample."""
-    start: _Sample
+    start: _Sample                     # the last measured frame
+    position: np.ndarray               # the pose sent for it, where the motion starts
+    rotation: Quaternion
     velocity: np.ndarray               # m/s
     acceleration: np.ndarray           # m/s^2
     image_velocity: np.ndarray         # image widths/heights per second
@@ -97,7 +100,10 @@ class _Blend:
 
 @dataclass
 class _HandState:
-    history: List[_Sample] = field(default_factory=list)
+    history: List[_Sample] = field(default_factory=list)  # tracked frames, as measured
+    # The pose observe() last returned: a gap starts from what was sent, which differs
+    # from the measurement while a returning hand blends in
+    sent: Optional[Tuple[np.ndarray, Quaternion]] = None
     motion: Optional[_Motion] = None
     last_prediction: Optional[Prediction] = None
     blend: Optional[_Blend] = None
@@ -128,7 +134,7 @@ def quat_from_rotation_vector(v: np.ndarray) -> Quaternion:
     return (math.cos(angle / 2.0), float(axis[0] * s), float(axis[1] * s), float(axis[2] * s))
 
 
-def damped_distance(tau: float, damping_seconds):
+def damped_distance(tau: float, damping_seconds: Union[float, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
     """
     How far a unit velocity and a unit acceleration carry in tau seconds when
     both decay with exp(-s / damping_seconds): the integrals of exp(-s/T) and
@@ -166,8 +172,9 @@ def fit_motion(times: Sequence[float], points: np.ndarray) -> Tuple[np.ndarray, 
 def _limit_acceleration(velocity: np.ndarray, acceleration: np.ndarray, damping_seconds: float) -> np.ndarray:
     """
     At most |velocity| / damping_seconds, so the acceleration can bend the path
-    or slow it down but never send the hand back the way it came, nor further
-    than twice where its velocity alone would take it.
+    or slow it down, but the hand never ends up behind where it was lost (it
+    may turn back after damping_seconds), nor further than twice where its
+    velocity alone would take it.
     """
     limit = float(np.linalg.norm(velocity)) / damping_seconds
     size = float(np.linalg.norm(acceleration))
@@ -225,20 +232,26 @@ class MotionPredictor:
             # Never part of a trajectory; the caller skips sending such a pose
             return tuple(float(v) for v in position), sample.rotation
         state = self._hands.setdefault(hand, _HandState())
-        returning = state.last_prediction
-        if returning is not None:
-            # The path before the gap is another movement: start the history over
-            state.history = []
-            state.blend = _Blend(t, returning.camera_position - position,
-                                 quat_multiply(returning.rotation, _conjugate(sample.rotation)))
+        if state.last_prediction is not None:
+            # Blend in from where the hand would be shown now, so the first frame back doesn't stall
+            shown = self._evaluate(state, state.motion,
+                                   min(t - state.history[-1].time, self.prediction_seconds))
+            state.blend = _Blend(t, shown.camera_position - position,
+                                 quat_multiply(shown.rotation, _conjugate(sample.rotation)))
         state.motion = None
         state.last_prediction = None
+        # Measured frames only, gap or not: a fit to what was sent would take the
+        # blend's own correction for motion, and errors would build up over
+        # repeated dropouts. Frames from before a gap still count while recent,
+        # so a hand lost again right after it is found keeps its speed.
         state.history = [s for s in state.history if t - s.time <= HISTORY_SECONDS][-(HISTORY_SAMPLES - 1):]
         state.history.append(sample)
-        return self._blended(state, sample)
+        position, rotation = self._blended(state, sample)
+        state.sent = (position, rotation)
+        return (float(position[0]), float(position[1]), float(position[2])), rotation
 
     @staticmethod
-    def _blended(state: _HandState, sample: _Sample) -> Tuple[Tuple[float, float, float], Quaternion]:
+    def _blended(state: _HandState, sample: _Sample) -> Tuple[np.ndarray, Quaternion]:
         position, rotation = sample.camera_position, sample.rotation
         blend = state.blend
         if blend is not None:
@@ -249,7 +262,7 @@ class MotionPredictor:
                 weight = remaining * remaining * (3.0 - 2.0 * remaining)  # smoothstep: no kink at either end
                 position = position + weight * blend.position_offset
                 rotation = quat_multiply(quat_slerp((1.0, 0.0, 0.0, 0.0), blend.rotation_offset, weight), rotation)
-        return (float(position[0]), float(position[1]), float(position[2])), rotation
+        return position, rotation
 
     def predict(self, hand: str, t: float) -> Optional[Prediction]:
         """
@@ -265,13 +278,13 @@ class MotionPredictor:
         if not 0.0 < tau <= self.prediction_seconds:
             return None
         if state.motion is None:
-            state.motion = self._fit(state.history, self.prediction_seconds)
+            state.motion = self._fit(state.history, state.sent, self.prediction_seconds)
         prediction = self._evaluate(state, state.motion, tau)
         state.last_prediction = prediction
         return prediction
 
     @staticmethod
-    def _fit(history: List[_Sample], horizon: float) -> _Motion:
+    def _fit(history: List[_Sample], sent: Tuple[np.ndarray, Quaternion], horizon: float) -> _Motion:
         start = history[-1]
         times = [s.time for s in history]
         velocity, acceleration = fit_motion(times, np.array([s.camera_position for s in history]))
@@ -287,6 +300,7 @@ class MotionPredictor:
         if np.linalg.norm(image_velocity) < MIN_IMAGE_SPEED:
             velocity, acceleration = np.zeros(3), np.zeros(3)
             image_velocity, image_acceleration = np.zeros(2), np.zeros(2)
+            angular_velocity = np.zeros(3)
 
         damping = POSITION_DAMPING_SECONDS
         leaving = _is_leaving(start.image_wrist, image_velocity,
@@ -294,7 +308,7 @@ class MotionPredictor:
         if leaving:
             damping = LEAVING_DAMPING_SECONDS
         velocity = _clamp_norm(velocity, MAX_SPEED_M_S)
-        return _Motion(start=start, velocity=velocity,
+        return _Motion(start=start, position=sent[0], rotation=sent[1], velocity=velocity,
                        acceleration=_limit_acceleration(velocity, acceleration, damping),
                        image_velocity=image_velocity,
                        image_acceleration=_limit_acceleration(image_velocity, image_acceleration, damping),
@@ -312,10 +326,10 @@ class MotionPredictor:
         turn_damping = min(ROTATION_DAMPING_SECONDS, motion.image_damping_seconds)
         turn = motion.angular_velocity * damped_distance(tau, turn_damping)[0]
         turn = _clamp_norm(turn, math.radians(MAX_EXTRA_TURN_DEG))
-        rotation = quat_multiply(quat_from_rotation_vector(turn), start.rotation)
+        rotation = quat_multiply(quat_from_rotation_vector(turn), motion.rotation)
 
         image_wrist = start.image_wrist + image_offset
-        return Prediction(camera_position=start.camera_position + camera_offset, rotation=rotation,
+        return Prediction(camera_position=motion.position + camera_offset, rotation=rotation,
                           image_wrist=image_wrist, image_offset=image_offset,
                           leaving=motion.leaving, path=self._path(state.history, motion))
 
