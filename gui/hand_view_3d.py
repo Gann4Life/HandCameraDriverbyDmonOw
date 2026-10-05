@@ -9,7 +9,7 @@ import numpy as np
 from PySide6.QtGui import QColor, QVector3D
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from gui.style import HAND_COLORS, MUTED_COLOR
+from gui.style import HAND_COLORS, MUTED_COLOR, PREDICTED_COLOR
 from hand_data import HAND_CONNECTIONS, TrackingFrame
 
 FRUSTUM_DEPTH = 0.25
@@ -83,11 +83,12 @@ class HandView3D(QWidget):
             if items is None:
                 continue
             seen.add(side)
+            color = PREDICTED_COLOR if hand.predicted else HAND_COLORS[side]
             wrist = to_gl(hand.camera_position)[0]
             if hand.camera_points is not None:
                 points = to_gl(hand.camera_points)
                 bones = np.array([points[i] for pair in HAND_CONNECTIONS for i in pair])
-                items['bones'].setData(pos=bones)
+                items['bones'].setData(pos=bones, color=rgba(color))
                 items['joints'].setData(pos=points)
                 items['bones'].setVisible(True)
             else:

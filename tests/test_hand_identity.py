@@ -168,3 +168,36 @@ def test_a_flat_hands_curl_noise_does_not_silence_the_image_cue():
 def test_mediapipes_label_never_vetoes_a_clear_curl():
     # Facing mode: the label assumes a palm toward the camera, so it can be the wrong one
     assert combine_handedness_votes(0.9, -0.9, secondary_ignores_depth=False) == pytest.approx(0.8 * 0.9 - 0.2 * 0.9)
+
+
+def test_a_lost_hand_followed_to_its_predicted_place_is_found_there():
+    # Two hands; the left one is lost on a fast move and comes back far from
+    # where it was seen, close to the right hand. Without following, it would
+    # look like it came from the right hand's track: new, and reset
+    def run(follow: bool):
+        tracker = HandIdentityTracker()
+        frames(tracker, [det(0, x=0.3, evidence=LEFT_VOTE), det(1, x=0.65, evidence=RIGHT_VOTE)])
+        tracker.assign([det(1, x=0.65, evidence=RIGHT_VOTE)], 1.0)
+        if follow:
+            tracker.follow("left", (0.55, 0.5))
+        sides = tracker.assign([det(0, x=0.57, evidence=0.0), det(1, x=0.65, evidence=RIGHT_VOTE)], 1.1)
+        return sides, tracker.new_sides
+
+    assert run(follow=False)[1] == {"left"}
+    sides, new_sides = run(follow=True)
+    assert sides == {0: "left", 1: "right"}
+    assert not new_sides
+
+
+def test_following_a_side_with_no_track_does_nothing():
+    tracker = HandIdentityTracker()
+    tracker.follow("left", (0.5, 0.5))
+    assert not tracker.has_track("left")
+
+
+def test_a_lone_hand_changing_side_drops_its_old_track():
+    tracker = HandIdentityTracker(switch_frames=3)
+    frames(tracker, [det(x=0.5, evidence=LEFT_VOTE)], count=5)
+    assert tracker.has_track("left")
+    frames(tracker, [det(x=0.5, evidence=RIGHT_VOTE)], start=1.0, count=5)
+    assert tracker.has_track("right") and not tracker.has_track("left")

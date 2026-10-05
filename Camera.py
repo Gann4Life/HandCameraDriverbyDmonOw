@@ -6,6 +6,7 @@ import cv2
 import mediapipe as mp
 import argparse
 import copy
+import dataclasses
 import json
 import math
 import sys
@@ -19,6 +20,7 @@ from gesture_scores import GestureClassifier, score_gestures
 from config_defaults import DEFAULT_CONFIG, DEFAULT_ROTATION_OFFSET_DEG, fill_defaults
 import presets
 from hand_identity import HandDetection, HandIdentityTracker, combine_handedness_votes, other_side
+from hand_motion import MotionPredictor, prediction_horizon
 from depth_assist import WiLoRDepthAssist
 from hand_fit import PALM, HandFitter, HandShape, bend_angles
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
@@ -112,6 +114,7 @@ class HandTracker:
         self.configure_view()
         self.configure_calibration()
         self.create_identity()
+        self.configure_prediction()
         self.create_hands_model()
         self.create_camera()
         self.create_gesture_detector()
@@ -214,11 +217,26 @@ class HandTracker:
         identity_config = self.config['tracking'].get('identity', {})
         self.hand_identity = HandIdentityTracker(
             continuity_radius=float(identity_config.get('continuity_radius', 0.15)),
-            memory_seconds=float(identity_config.get('memory_seconds', 0.4)),
+            memory_seconds=self.identity_memory_seconds(),
             switch_frames=int(identity_config.get('switch_frames', 15)),
             duplicate_radius=float(identity_config.get('duplicate_radius', 0.05)),
             user_left_is_image_left=not self.mirror_x,
             order_weight=float(identity_config.get('order_weight', 1.5)))
+
+    def identity_memory_seconds(self) -> float:
+        """
+        How long a lost hand keeps its side: at least as long as it is
+        predicted, so the hand found again is the one that was predicted.
+        """
+        memory = float(self.config['tracking'].get('identity', {}).get('memory_seconds', 0.4))
+        return max(memory, prediction_horizon(self.config['calibration']['prediction_seconds']))
+
+    def configure_prediction(self):
+        """(Re)create the motion predictor that keeps lost hands moving (hand_motion)."""
+        self.motion = MotionPredictor(self.config['calibration']['prediction_seconds'])
+        # The last tracked frame of each hand, whose fingers and controls a predicted hand keeps
+        self.last_tracked: Dict[str, TrackedHand] = {}
+        self.hand_identity.memory_seconds = self.identity_memory_seconds()
 
     def create_hands_model(self):
         """(Re)create the MediaPipe Hands model from the tracking settings."""
@@ -317,6 +335,8 @@ class HandTracker:
             return self.swap_identities
         if key.startswith(VIEW_KEYS):
             return self.reconfigure_view
+        if key == 'calibration.prediction_seconds':
+            return self.configure_prediction
         if key.startswith('calibration.'):
             return self.configure_calibration
         if key.startswith('tracking.identity.'):
@@ -354,6 +374,7 @@ class HandTracker:
         self.build_filters()  # each hand's history belonged to the other
         self.hand_size.reset()
         self.hand_fits = {}
+        self.configure_prediction()
         print("Hands swapped")
 
     def reset_hand(self, hand_type: str) -> None:
@@ -369,6 +390,8 @@ class HandTracker:
         self.last_camera_position.pop(hand_type, None)
         self.control_mapper.reset(hand_type)
         self.gesture_classifier.reset(hand_type)
+        self.motion.forget(hand_type)
+        self.last_tracked.pop(hand_type, None)
 
     def fit_hand(self, hand_landmarks, world: List[Tuple[float, float, float]],
                  frame_width: int, frame_height: int, hand_type: Optional[str] = None) -> Optional[np.ndarray]:
@@ -737,19 +760,6 @@ class HandTracker:
         if self.depth_source == 'wilor':
             camera_position = self.apply_assisted_depth(landmarks[0][:2], camera_position, now)
         camera_position = self.smooth_camera_position(hand_type, camera_position, now)
-        # The joints follow the filtered wrist, so the 3D preview shows what is sent
-        camera_points = fitted - fitted[0] + np.array(camera_position) if fitted is not None else None
-
-        # Apply calibration: scale in camera space, tilt into HMD space, then offset
-        scale = self.calibration['scale']
-        offset = self.calibration['position_offset']
-        x, y, z = camera_position
-        if self.flip_z:
-            # Distance from a camera in front of the user becomes distance
-            # forward of the user: a hand nearer the camera is further out
-            z = -z - self.facing_distance
-        cx, cy, cz = quat_rotate(self.camera_rotation, (x * scale, y * scale, z * scale))
-        position = (cx + offset[0], cy + offset[1], cz + offset[2])
 
         # Calculate hand orientation from the metric world landmarks; the
         # normalised ones have a squashed, image-relative Z and unequal X/Y scales.
@@ -764,7 +774,11 @@ class HandTracker:
             rotation = self.rotation_filters[hand_type](rotation, now)
         else:
             rotation = (1.0, 0.0, 0.0, 0.0)
-        position, rotation = self.index_adjustment(hand_type, position, rotation)
+        # A hand found again after a prediction blends in from where it was predicted
+        camera_position, rotation = self.motion.observe(hand_type, now, camera_position, rotation, landmarks[0][:2])
+        # The joints follow the filtered wrist, so the 3D preview shows what is sent
+        camera_points = fitted - fitted[0] + np.array(camera_position) if fitted is not None else None
+        position, rotation = self.driver_pose(hand_type, camera_position, rotation)
 
         # Trigger, grip and the gesture name, from finger curl and pinch. Without
         # world landmarks there are no features, so the old detector is the fallback.
@@ -798,6 +812,46 @@ class HandTracker:
         )
         return TrackedHand(data=hand_data, camera_position=camera_position, camera_points=camera_points,
                            features=features, gesture_scores=scores)
+
+    def driver_pose(self, hand_type: str, camera_position: Tuple[float, float, float],
+                    rotation: Tuple[float, float, float, float]):
+        """
+        The pose sent to the driver for a camera-space wrist and a hand rotation
+        already in headset space: the calibration, then the Index adjustment.
+        """
+        # Scale in camera space, tilt into HMD space, then offset
+        scale = self.calibration['scale']
+        offset = self.calibration['position_offset']
+        x, y, z = camera_position
+        if self.flip_z:
+            # Distance from a camera in front of the user becomes distance
+            # forward of the user: a hand nearer the camera is further out
+            z = -z - self.facing_distance
+        cx, cy, cz = quat_rotate(self.camera_rotation, (x * scale, y * scale, z * scale))
+        position = (cx + offset[0], cy + offset[1], cz + offset[2])
+        return self.index_adjustment(hand_type, position, rotation)
+
+    def predicted_hand(self, hand_type: str, now: float) -> Optional[TrackedHand]:
+        """
+        A lost hand moved to where it is predicted to be (hand_motion), with the
+        fingers, controls and gesture of its last tracked frame. None when it
+        isn't predicted.
+        """
+        last = self.last_tracked.get(hand_type)
+        prediction = self.motion.predict(hand_type, now) if last is not None else None
+        if prediction is None:
+            return None
+        camera_position = tuple(float(v) for v in prediction.camera_position)
+        position, rotation = self.driver_pose(hand_type, camera_position, prediction.rotation)
+        du, dv = prediction.image_offset
+        landmarks = [(x + du, y + dv, z) for x, y, z in last.data.landmarks]
+        data = dataclasses.replace(last.data, position=position, rotation=rotation, landmarks=landmarks,
+                                   is_detected=False)
+        camera_points = None
+        if last.camera_points is not None:
+            camera_points = last.camera_points - np.array(last.camera_position) + prediction.camera_position
+        return dataclasses.replace(last, data=data, camera_position=camera_position, camera_points=camera_points,
+                                   predicted=True, path=prediction.path)
 
     def index_adjustment(self, hand_type: str, position: Tuple[float, float, float],
                          rotation: Tuple[float, float, float, float]):
@@ -841,18 +895,19 @@ class HandTracker:
 
         return (dist1 + dist2 + dist3) / 3.0
 
-    def draw_landmarks(self, frame, landmarks: List[Tuple[float, float, float]]):
+    def draw_landmarks(self, frame, landmarks: List[Tuple[float, float, float]], color=(255, 0, 0)):
         """
         Draw a hand's skeleton on the frame.
 
         Args:
             frame: OpenCV frame
             landmarks: Normalised image landmarks
+            color: BGR colour of the bones
         """
         h, w = frame.shape[:2]
         points = [(int(x * w), int(y * h)) for x, y, _ in landmarks]
         for a, b in HAND_CONNECTIONS:
-            cv2.line(frame, points[a], points[b], (255, 0, 0), 2)
+            cv2.line(frame, points[a], points[b], color, 2)
         for point in points:
             cv2.circle(frame, point, 2, (0, 255, 0), 2)
 
@@ -959,9 +1014,11 @@ class HandTracker:
                 hand = self.process_hand_landmarks(hand_landmarks, hand_world, sides[i],
                                                    frame.shape[1], frame.shape[0])
                 tracked.append(hand)
+                self.last_tracked[sides[i]] = hand
                 if self.debug['log_gestures']:
                     print(f"{hand.data.hand_type}: {hand.data.gesture} "
                           f"T:{hand.data.trigger_value:.2f} G:{hand.data.grip_value:.2f}")
+        tracked += self.predict_lost_hands({hand.data.hand_type for hand in tracked}, time.perf_counter())
 
         if self.recenter_requested:
             self.recenter_requested = False
@@ -989,6 +1046,36 @@ class HandTracker:
             hfov_deg=self.hfov_deg,
         )
 
+    def predict_lost_hands(self, seen: set, now: float) -> List[TrackedHand]:
+        """
+        Keep each hand lost this frame moving along its path for a while
+        (hand_motion), instead of freezing it until it is found again.
+
+        Args:
+            seen: The sides tracked this frame
+            now: Time in seconds
+
+        Returns:
+            The predicted hands
+        """
+        predicted = []
+        for side in ('left', 'right'):
+            if side in seen or side not in self.last_tracked:
+                continue
+            # The identity tracker keeps its own, unswapped, sides
+            identity_side = other_side(side) if self.user_swap else side
+            if not self.hand_identity.has_track(identity_side):
+                # The hand changed side: it is tracked as the other hand now
+                self.reset_hand(side)
+                continue
+            hand = self.predicted_hand(side, now)
+            if hand is None:
+                continue
+            predicted.append(hand)
+            # Look for the hand where it is predicted to be
+            self.hand_identity.follow(identity_side, hand.data.landmarks[0][:2])
+        return predicted
+
     def stop(self):
         """Release the camera, the driver connection and the models."""
         print("\nCleaning up...")
@@ -1009,7 +1096,7 @@ class HandTracker:
         frame = tracking_frame.frame_bgr
         if self.debug['show_landmarks']:
             for hand in tracking_frame.hands:
-                self.draw_landmarks(frame, hand.data.landmarks)
+                self.draw_landmarks(frame, hand.data.landmarks, (160, 160, 160) if hand.predicted else (255, 0, 0))
         self.draw_info(frame, [hand.data for hand in tracking_frame.hands], tracking_frame.tracking_fps)
         cv2.imshow('Hand Tracking', frame)
 
