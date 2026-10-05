@@ -39,6 +39,11 @@ DEFAULTS = {
 PINCH_GATE_FADE = 0.15
 
 
+def _curls_key(hand_type: str) -> str:
+    """ControlMapper's filter key for a hand's finger curls (its controls use the bare hand_type)."""
+    return hand_type + ".curls"
+
+
 class ControlMapper:
     """Per-hand trigger and grip from features, smoothed."""
 
@@ -78,6 +83,13 @@ class ControlMapper:
             grip = self._latch(hand_type, "grip", grip)
         return trigger, grip
 
+    def reset(self, hand_type: str):
+        """Forget one hand's smoothing and held controls, for a hand that is new on this side."""
+        for key in (hand_type, _curls_key(hand_type)):
+            self._filters.pop(key, None)
+        for control in ("trigger", "grip"):
+            self._latched.pop((hand_type, control), None)
+
     def _latch(self, hand_type: str, control: str, value: float) -> float:
         key = (hand_type, control)
         held = self._latched.get(key, False)
@@ -87,7 +99,7 @@ class ControlMapper:
 
     def finger_curls(self, hand_type: str, features: HandFeatures, t: float) -> Tuple[float, ...]:
         """Smoothed curl of each finger, thumb to pinky, for the Index finger inputs and skeleton."""
-        key = hand_type + ".curls"
+        key = _curls_key(hand_type)
         smoother = self._filters.get(key)
         if smoother is None:
             smoother = OneEuroFilter(float(self.config["controls_min_cutoff"]), float(self.config["controls_beta"]))

@@ -27,6 +27,21 @@ What changed for users in each version. The format follows
 - The SteamVR driver is the only program that can use its port on Windows.
 
 ### Fixed
+- Left and right are steadier, with one hand or two:
+  - A single hand in view keeps its side however far it moves across the picture (a turning
+    camera) and when it is briefly out of view.
+  - In POV, seeing the back of the hand no longer flips it to the other side.
+  - A second hand, or part of one at the edge of the picture, no longer pushes the tracked hand to
+    the other side.
+  - A real change of side now needs about half a second of clear evidence instead of a fifth.
+    Every preset with the old value moves to the new one, yours included; a value you changed
+    yourself stays.
+  - A hand raised right after the other one was lowered is placed by its own shape, not by the
+    side of the hand before it.
+- A hand that appears, comes back after being lost, or changes side now starts clean on that side.
+  Before, it could inherit the smoothing, trigger, grip and gesture of whatever that side held
+  before, so a grip or gesture could survive a lost hand. A fast move alone doesn't reset anything,
+  so a held grip survives a quick swing.
 - The driver could crash SteamVR when it shut down while the app was connected.
 - The driver used to stop listening for good after one failed connection. Now it keeps listening.
 - Hand position and rotation could be out of step for a frame.

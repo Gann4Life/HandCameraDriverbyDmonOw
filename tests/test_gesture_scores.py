@@ -63,3 +63,14 @@ def test_hands_are_classified_separately():
         classify("left", scores(POINT=1.0))
         classify("right", scores(PEACE=1.0))
     assert classify("left", scores(POINT=1.0)) == "POINT"
+
+
+def test_reset_forgets_one_hands_gesture():
+    classify = GestureClassifier({"gesture_confirm_frames": 1})
+    assert classify("left", scores(FIST=1.0)) == "FIST"
+    assert classify("right", scores(FIST=1.0)) == "FIST"
+    classify.reset("left")
+    # A score FIST would keep, but not reach afresh
+    held = scores(FIST=DEFAULTS["gesture_enter"] - 0.05)
+    assert classify("left", held) == UNKNOWN
+    assert classify("right", held) == "FIST"
