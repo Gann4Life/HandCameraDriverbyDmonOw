@@ -4,7 +4,7 @@ import math
 import numpy as np
 import pytest
 
-from hand_motion import (BLEND_SECONDS, MAX_EXTRA_TURN_DEG, MIN_IMAGE_SPEED, MotionPredictor, damped_distance,
+from hand_motion import (BLEND_SECONDS, MAX_EXTRA_TURN_DEG, MAX_SPEED_M_S, MIN_IMAGE_SPEED, MotionPredictor, damped_distance,
                          fit_motion, quat_from_rotation_vector, rotation_vector)
 
 FPS = 30
@@ -85,7 +85,50 @@ def test_depth_is_trusted_for_less_time_than_the_picture_axes():
     last = track(predictor, [(0.5 * i / FPS, 0.0, -0.4 - 0.5 * i / FPS) for i in range(5)])
     moved = predictor.predict("left", last + 0.2).camera_position - np.array((0.5 * 4 / FPS, 0.0, -0.4 - 0.5 * 4 / FPS))
     assert moved[0] > 0.0 and moved[2] < 0.0  # both keep going: right, and away from the camera
-    assert abs(moved[2]) < 0.5 * moved[0]
+    assert abs(moved[2]) < 0.8 * moved[0]
+
+
+def test_a_punch_keeps_going_away_from_the_camera():
+    # A POV punch is mostly depth: steady frames moving away keep it moving
+    predictor = MotionPredictor(0.3)
+    last = track(predictor, [(0.6 * i / FPS, 0.0, -0.3 - 1.0 * i / FPS) for i in range(5)])
+    moved = predictor.predict("left", last + 0.2).camera_position[2] - (-0.3 - 4 / FPS)
+    assert moved < -0.05
+
+
+def test_a_one_frame_depth_jump_does_not_send_the_hand_away():
+    # A turning wrist or a hidden finger moves one camera's depth by centimetres at once
+    predictor = MotionPredictor(0.3)
+    positions = [(0.6 * i / FPS, 0.0, -0.4) for i in range(4)] + [(0.6 * 4 / FPS, 0.0, -0.48)]
+    last = track(predictor, positions)
+    assert predictor.predict("left", last + 0.2).camera_position[2] == pytest.approx(-0.48, abs=1e-9)
+
+
+def test_depth_going_back_and_forth_holds():
+    predictor = MotionPredictor(0.3)
+    positions = [(0.6 * i / FPS, 0.0, -0.4 + (0.02 if i % 2 else 0.0)) for i in range(5)]
+    last = track(predictor, positions)
+    prediction = predictor.predict("left", last + 0.2).camera_position
+    assert prediction[2] == pytest.approx(positions[-1][2], abs=1e-9)
+    assert prediction[0] > positions[-1][0]  # still moving across the picture
+
+
+def test_a_wrist_that_jumps_across_the_picture_is_left_out_of_the_fit():
+    # A misdetection, or the other hand taken for this one, for a frame
+    predictor = MotionPredictor(0.3)
+    image = [(0.3 + 0.02 * i, 0.5) for i in range(4)] + [(0.75, 0.5)]
+    positions = [(0.6 * i / FPS, 0.0, -0.4) for i in range(4)] + [(0.3, 0.0, -0.4)]
+    last = track(predictor, positions, image=image)
+    prediction = predictor.predict("left", last + 0.2)
+    # Moves on at the speed of the frames before the jump, from where the hand was last sent
+    assert prediction.camera_position[0] - 0.3 == pytest.approx(0.6 * 0.2 * (1 - math.exp(-1)), rel=0.2)
+
+
+def test_a_lost_hand_is_never_moved_faster_than_the_cap():
+    predictor = MotionPredictor(1.0)
+    last = track(predictor, [(5.0 * i / FPS, 0.0, -0.4) for i in range(5)], image=[(0.1 + 0.05 * i, 0.5) for i in range(5)])
+    one_frame = predictor.predict("left", last + 1 / FPS).camera_position[0] - 5.0 * 4 / FPS
+    assert one_frame <= MAX_SPEED_M_S / FPS + 1e-9
 
 
 def test_past_the_horizon_there_is_no_prediction():

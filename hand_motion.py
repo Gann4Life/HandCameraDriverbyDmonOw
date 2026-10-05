@@ -32,10 +32,12 @@ HISTORY_SAMPLES = 8
 # Time constants of the velocity's decay while lost. Depth from one camera is
 # far noisier than the picture's axes (a turning wrist alone changes it), and
 # rotation is noisier too, so both slow down sooner; a hand leaving the picture
-# stops sooner still. Measured on recorded POV clips: with depth decaying as
-# slowly as the rest, a lost hand ended further from where it was found.
+# stops sooner still. Depth only moves at all when its frames agree (see
+# DEPTH_NOISE_M); on the recorded sessions such depth motion, damped over 0.05
+# to 0.2 s, ended as far from where the hand was found either way, and 0.1 s
+# lets a punch carry on instead of stopping a few centimetres in.
 POSITION_DAMPING_SECONDS = 0.2
-DEPTH_DAMPING_SECONDS = 0.05
+DEPTH_DAMPING_SECONDS = 0.1
 ROTATION_DAMPING_SECONDS = 0.1
 LEAVING_DAMPING_SECONDS = 0.05
 # A hand lost while its wrist crosses the picture slower than this (in picture
@@ -43,8 +45,24 @@ LEAVING_DAMPING_SECONDS = 0.05
 # its speed would be mostly noise, and on the
 # recorded clips moving it ended further from where it was found than holding.
 MIN_IMAGE_SPEED = 0.5
-# Faster than a hand moves through a gap: a depth misread, not motion
-MAX_SPEED_M_S = 4.0
+# The fastest a lost hand is moved. Hands do swing faster, but the speed
+# measured just before a gap is mostly noise above this: on a recorded VR
+# session it cut the furthest a lost hand travelled from 18 to 12 cm, and
+# lost hands ended as close to where they were found as with 4 m/s.
+MAX_SPEED_M_S = 1.5
+# Depth keeps moving through a gap only when the tracked frames agree on it:
+# every step at least DEPTH_NOISE_M goes the same way, and no single step makes
+# most of the move. One camera's depth jumps by centimetres when the wrist turns
+# or a finger hides, and on the recorded clips extrapolating such a jump sent
+# lost hands 8-14 cm away within a frame or two.
+DEPTH_NOISE_M = 0.005
+DEPTH_MIN_STEPS = 2
+DEPTH_MAX_STEP_SHARE = 0.6
+# A tracked wrist that jumps this many times further than the frames before it
+# moved, and at least JUMP_MIN_IMAGE of the picture, is a misdetection or a
+# hand mistaken for the other: the fit leaves it out
+JUMP_RATIO = 3.0
+JUMP_MIN_IMAGE = 0.05
 # A bad rotation estimate can't spin the hand further than this
 MAX_EXTRA_TURN_DEG = 45.0
 # A wrist this close to the picture's edge (fraction of the image), moving toward it, is leaving
@@ -286,9 +304,13 @@ class MotionPredictor:
     @staticmethod
     def _fit(history: List[_Sample], sent: Tuple[np.ndarray, Quaternion], horizon: float) -> _Motion:
         start = history[-1]
+        history = _without_jump(history)
         times = [s.time for s in history]
-        velocity, acceleration = fit_motion(times, np.array([s.camera_position for s in history]))
+        positions = np.array([s.camera_position for s in history])
+        velocity, acceleration = fit_motion(times, positions)
         image_velocity, image_acceleration = fit_motion(times, np.array([s.image_wrist for s in history]))
+        if not _depth_agrees(positions[:, 2]):
+            velocity[2] = acceleration[2] = 0.0
 
         # Average turn rate over the history, so one noisy frame doesn't decide it
         angular_velocity = np.zeros(3)
@@ -342,6 +364,28 @@ class MotionPredictor:
             ahead.append(motion.start.image_wrist + motion.image_velocity * by_velocity
                          + motion.image_acceleration * by_acceleration)
         return np.array([s.image_wrist for s in history] + ahead)
+
+
+def _without_jump(history: List[_Sample]) -> List[_Sample]:
+    """The history without its newest frame when that frame's wrist jumped far beyond how the hand was moving."""
+    if len(history) < 3:
+        return history
+    wrists = np.array([s.image_wrist for s in history])
+    times = np.array([s.time for s in history])
+    steps = np.linalg.norm(np.diff(wrists, axis=0), axis=1)
+    speeds = steps / np.maximum(np.diff(times), 1e-6)
+    if steps[-1] >= JUMP_MIN_IMAGE and speeds[-1] > JUMP_RATIO * float(np.median(speeds[:-1])):
+        return history[:-1]
+    return history
+
+
+def _depth_agrees(depths: np.ndarray) -> bool:
+    """Whether the tracked frames move steadily in depth: enough steps, all one way, none making most of the move."""
+    steps = np.diff(depths)
+    steps = steps[np.abs(steps) >= DEPTH_NOISE_M]
+    if len(steps) < max(DEPTH_MIN_STEPS, 1) or not (np.all(steps > 0.0) or np.all(steps < 0.0)):
+        return False
+    return float(np.max(np.abs(steps))) <= DEPTH_MAX_STEP_SHARE * abs(float(depths[-1] - depths[0]))
 
 
 def _is_leaving(wrist: np.ndarray, velocity: np.ndarray, end: np.ndarray) -> bool:
