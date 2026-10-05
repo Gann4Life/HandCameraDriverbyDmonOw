@@ -180,15 +180,12 @@ SETTINGS = (
             help="Index curl that counts as a fully pressed trigger."),
     Setting("gestures.trigger_from_pinch", "Pinch pulls the trigger", "bool", "Gestures",
             help="Touching thumb and index tips also presses the trigger, like grabbing small things."),
-    Setting("gestures.grip_latch", "Steady grip", "bool", "Gestures",
-            help="Grip is either fully closed or open, with a gap between grabbing and letting go, so "
-                 "objects are not dropped and picked up again while you hold them."),
-    Setting("gestures.trigger_latch", "Steady trigger", "bool", "Gestures",
-            help="The same for the trigger: pressed or released, nothing in between."),
-    Setting("gestures.latch_on", "Steady: grabs at", "float", "Gestures", advanced=True,
-            help="Grip or trigger value where a steady control closes."),
-    Setting("gestures.latch_off", "Steady: lets go below", "float", "Gestures", advanced=True,
-            help="Value where a steady control opens again. Keep it well under \"Steady: grabs at\"."),
+    Setting("gestures.latch_on", "Grip holds from", "float", "Gestures", advanced=True,
+            help="Once grip reaches this, it stays at its highest value while you hold, so objects are not "
+                 "dropped when the hand is misread for a moment."),
+    Setting("gestures.latch_off", "Grip lets go below", "float", "Gestures", advanced=True,
+            help="A held grip lets go when it stays under this for a tenth of a second. Keep it well under "
+                 "\"Grip holds from\"."),
     Setting("gestures.pinch_open", "Pinch starts at", "float", "Gestures", minimum=0.1, maximum=1.5,
             unit=" palms", help="Thumb-to-index-tip distance, in palm lengths, where a pinch begins."),
     Setting("gestures.pinch_closed", "Full pinch at", "float", "Gestures", minimum=0.0, maximum=1.0,

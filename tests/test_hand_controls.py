@@ -1,6 +1,6 @@
 import pytest
 
-from hand_controls import DEFAULTS, ControlMapper
+from hand_controls import DEFAULTS, GRIP_RELEASE_SECONDS, ControlMapper
 from hands import make_features as features
 
 # More than OneEuroFilter's reset_after: every sample starts the filter over,
@@ -45,31 +45,56 @@ def test_pinch_fades_out_when_the_index_tip_is_in_the_palm():
     assert mapper.pinch_strength(in_palm) == 0.0
 
 
-def test_latched_trigger_needs_a_clear_gap_to_press_and_release():
-    mapper = ControlMapper({"trigger_latch": True, "trigger_from_pinch": False})
+def grip_curls(value: float) -> tuple:
+    """Curls that give this grip value with the default ramp."""
+    start, full = DEFAULTS["grip_curl_start"], DEFAULTS["grip_curl_full"]
+    return (0.0, 0.0) + (start + value * (full - start),) * 3
+
+
+def test_grip_holds_its_peak_until_it_stays_below_the_release_value():
+    mapper = ControlMapper({})
     on, off = DEFAULTS["latch_on"], DEFAULTS["latch_off"]
+    between = (on + off) / 2
     steps = [
-        ((on + off) / 2, 0.0),  # between the thresholds: not pressed yet
-        (on + 0.05, 1.0),        # above latch_on: pressed
-        ((on + off) / 2, 1.0),  # back between them: still pressed
-        (off - 0.05, 0.0),       # below latch_off: released
+        (between, between),  # below latch_on: analog, nothing held
+        (on + 0.1, on + 0.1),  # holds from here
+        (between, on + 0.1),  # back between the thresholds: still the peak
+        (0.0, on + 0.1),  # one misread frame: still held
+        (0.0, 0.0),  # below latch_off for longer: lets go
     ]
-    for i, (value, expected) in enumerate(steps):
+    # Apart enough for no smoothing, except the last: the same value again, a release wait later
+    times = [0.0, 1.0, 2.0, 3.0, 3.0 + GRIP_RELEASE_SECONDS]
+    for i, ((value, expected), t) in enumerate(zip(steps, times)):
+        _, grip = mapper("right", features(curl=grip_curls(value)), t * NO_SMOOTHING_STEP_S)
+        assert grip == pytest.approx(expected), f"step {i}: grip {value:.2f}"
+
+
+def test_a_short_dip_does_not_restart_the_release_wait():
+    mapper = ControlMapper({})
+    mapper("right", features(curl=grip_curls(1.0)), 0.0)
+    mapper("right", features(curl=grip_curls(0.0)), 1.0)
+    mapper("right", features(curl=grip_curls(1.0)), 2.0)
+    # Below again: the wait starts over, so a release needs a fresh full wait
+    _, grip = mapper("right", features(curl=grip_curls(0.0)), 3.0)
+    assert grip == 1.0
+
+
+def test_trigger_stays_analog():
+    mapper = ControlMapper({"trigger_from_pinch": False})
+    for i, value in enumerate((0.5, 0.9, 0.5)):
         curl = (0.0, index_curl_for_trigger(value), 0.0, 0.0, 0.0)
         trigger, _ = mapper("right", features(curl=curl), i * NO_SMOOTHING_STEP_S)
-        assert trigger == expected, f"step {i}: trigger {value:.2f}"
+        assert trigger == pytest.approx(value)
 
 
-def test_latch_state_is_per_hand():
-    mapper = ControlMapper({"grip_latch": True})
+def test_grip_hold_is_per_hand():
+    mapper = ControlMapper({})
     between = (DEFAULTS["latch_on"] + DEFAULTS["latch_off"]) / 2
-    start, full = DEFAULTS["grip_curl_start"], DEFAULTS["grip_curl_full"]
-    between_curl = start + between * (full - start)
-    _, left = mapper("left", features(curl=(0.0, 0.0, 1.0, 1.0, 1.0)), 0.0)
-    _, left = mapper("left", features(curl=(0.0, 0.0) + (between_curl,) * 3), NO_SMOOTHING_STEP_S)
-    _, right = mapper("right", features(curl=(0.0, 0.0) + (between_curl,) * 3), NO_SMOOTHING_STEP_S)
-    assert left == 1.0   # held from the earlier press
-    assert right == 0.0  # never pressed
+    mapper("left", features(curl=grip_curls(1.0)), 0.0)
+    _, left = mapper("left", features(curl=grip_curls(between)), NO_SMOOTHING_STEP_S)
+    _, right = mapper("right", features(curl=grip_curls(between)), NO_SMOOTHING_STEP_S)
+    assert left == 1.0  # held from the earlier grab
+    assert right == pytest.approx(between)  # never held
 
 
 def test_smoothing_is_per_hand():
@@ -92,14 +117,12 @@ def test_finger_curls_are_smoothed_apart_from_trigger_and_grip():
     assert mapper.finger_curls("left", features(), 0.01) == (0.0,) * 5
 
 
-def test_reset_forgets_a_held_latch_for_that_hand_only():
-    mapper = ControlMapper({"trigger_latch": True, "trigger_from_pinch": False})
-    on, off = DEFAULTS["latch_on"], DEFAULTS["latch_off"]
-    between = (0.0, index_curl_for_trigger((on + off) / 2), 0.0, 0.0, 0.0)
-    pressed = (0.0, index_curl_for_trigger(on + 0.05), 0.0, 0.0, 0.0)
+def test_reset_forgets_a_held_grip_for_that_hand_only():
+    mapper = ControlMapper({})
+    between = (DEFAULTS["latch_on"] + DEFAULTS["latch_off"]) / 2
     for hand in ("left", "right"):
-        assert mapper(hand, features(curl=pressed), 0.0)[0] == 1.0
+        mapper(hand, features(curl=grip_curls(1.0)), 0.0)
     mapper.reset("left")
-    # Between the thresholds a held trigger stays held, a fresh one stays released
-    assert mapper("left", features(curl=between), NO_SMOOTHING_STEP_S)[0] == 0.0
-    assert mapper("right", features(curl=between), NO_SMOOTHING_STEP_S)[0] == 1.0
+    # Between the thresholds a held grip stays held, a fresh one is analog
+    assert mapper("left", features(curl=grip_curls(between)), NO_SMOOTHING_STEP_S)[1] == pytest.approx(between)
+    assert mapper("right", features(curl=grip_curls(between)), NO_SMOOTHING_STEP_S)[1] == 1.0

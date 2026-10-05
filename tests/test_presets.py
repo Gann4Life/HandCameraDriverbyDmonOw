@@ -32,6 +32,19 @@ def test_format_4_keeps_a_value_the_user_chose():
     assert get_value(config, KEY) == 9
     assert config["presets"]["Mine"][KEY] == 9
 
+def test_format_5_removes_the_steady_switches_everywhere():
+    config = format_3_config(9)
+    set_value(config, "gestures.grip_latch", True)
+    config["presets"]["Mine"]["gestures.trigger_latch"] = True
+    config["presets"]["POV"] = {"gestures.grip_latch": True, **presets.default_values("POV")}
+    presets.migrate(config)
+    for key in presets.REMOVED_KEYS:
+        assert get_value(config, key) is None
+        assert all(key not in saved for saved in config["presets"].values())
+    # POV only differed from its defaults by the removed switch
+    assert "POV" not in config["presets"]
+
+
 def test_a_config_from_before_presets_also_moves_the_old_switch_frames():
     config = copy.deepcopy(DEFAULT_CONFIG)
     set_value(config, KEY, 6)

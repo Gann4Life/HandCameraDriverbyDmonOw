@@ -4,7 +4,8 @@ reads them: grip is how far middle, ring and pinky close, trigger is how far
 the index closes or how hard thumb and index pinch. Both can be on at once
 (a pinch with the other fingers closed), so nothing has to choose between them.
 """
-from typing import Dict, Tuple
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 
 from hand_features import FINGERS, FULL_CURL_DEG, OPEN_CURL_DEG, HandFeatures, ramp
 from utils.one_euro import OneEuroFilter
@@ -22,11 +23,9 @@ DEFAULTS = {
     "grip_curl_full": 0.80,
     "controls_min_cutoff": 2.0,  # One Euro smoothing of trigger and grip
     "controls_beta": 5.0,
-    # Latched controls jump to fully pressed above latch_on and only let go
-    # below latch_off, so a value hovering near the game's own threshold
-    # doesn't grab and drop over and over
-    "grip_latch": False,
-    "trigger_latch": False,
+    # A grip that reaches latch_on is held at its peak until it stays below
+    # latch_off for GRIP_RELEASE_SECONDS, so a value dipping near the game's own
+    # threshold doesn't drop what the hand holds. It stays analog (no snap to 0/1).
     "latch_on": 0.6,
     "latch_off": 0.35,
     # Summed bend of each finger (thumb..pinky), open and fully curled, in
@@ -37,6 +36,16 @@ DEFAULTS = {
 
 # How far below the gate the pinch fades out completely
 PINCH_GATE_FADE = 0.15
+
+# How long a held grip must stay below latch_off before it lets go: longer than
+# a few misread frames, short enough that opening the hand feels immediate
+GRIP_RELEASE_SECONDS = 0.1
+
+
+@dataclass
+class _GripHold:
+    peak: float
+    below_since: Optional[float] = None
 
 
 def _curls_key(hand_type: str) -> str:
@@ -50,7 +59,7 @@ class ControlMapper:
     def __init__(self, config: Dict):
         self.config = {key: config.get(key, default) for key, default in DEFAULTS.items()}
         self._filters: Dict[str, OneEuroFilter] = {}
-        self._latched: Dict[Tuple[str, str], bool] = {}
+        self._grip_holds: Dict[str, _GripHold] = {}
 
     def pinch_strength(self, features: HandFeatures) -> float:
         """Thumb-index pinch, 0..1, faded out when the index tip is in the palm (a fist)."""
@@ -77,25 +86,30 @@ class ControlMapper:
             self._filters[hand_type] = smoother
         trigger, grip = smoother(self.raw(features), t)
         trigger, grip = min(1.0, max(0.0, trigger)), min(1.0, max(0.0, grip))
-        if self.config["trigger_latch"]:
-            trigger = self._latch(hand_type, "trigger", trigger)
-        if self.config["grip_latch"]:
-            grip = self._latch(hand_type, "grip", grip)
-        return trigger, grip
+        return trigger, self._hold_grip(hand_type, grip, t)
 
     def reset(self, hand_type: str):
-        """Forget one hand's smoothing and held controls, for a hand that is new on this side."""
+        """Forget one hand's smoothing and held grip, for a hand that is new on this side."""
         for key in (hand_type, _curls_key(hand_type)):
             self._filters.pop(key, None)
-        for control in ("trigger", "grip"):
-            self._latched.pop((hand_type, control), None)
+        self._grip_holds.pop(hand_type, None)
 
-    def _latch(self, hand_type: str, control: str, value: float) -> float:
-        key = (hand_type, control)
-        held = self._latched.get(key, False)
-        held = value >= float(self.config["latch_off"]) if held else value >= float(self.config["latch_on"])
-        self._latched[key] = held
-        return 1.0 if held else 0.0
+    def _hold_grip(self, hand_type: str, grip: float, t: float) -> float:
+        """The grip to send: its peak while held, the value itself otherwise."""
+        hold = self._grip_holds.get(hand_type)
+        if hold is None:
+            if grip >= float(self.config["latch_on"]):
+                self._grip_holds[hand_type] = _GripHold(grip)
+            return grip
+        hold.peak = max(hold.peak, grip)
+        if grip >= float(self.config["latch_off"]):
+            hold.below_since = None
+        elif hold.below_since is None:
+            hold.below_since = t
+        elif t - hold.below_since >= GRIP_RELEASE_SECONDS:
+            del self._grip_holds[hand_type]
+            return grip
+        return hold.peak
 
     def finger_curls(self, hand_type: str, features: HandFeatures, t: float) -> Tuple[float, ...]:
         """Smoothed curl of each finger, thumb to pinky, for the Index finger inputs and skeleton."""
