@@ -235,6 +235,40 @@ The tracker keeps running at full speed in the background, even when the game ha
 - **Driver log:** the SteamVR log (`Steam\logs\vrserver.txt`) should have about one
   `HandTracking LEFT/RIGHT pos: ...` line per second.
 
+### Record a session (`app.py`)
+
+To study a problem or replay it later, record what the camera sees and what the tracker made of it.
+
+- **Record** in the toolbar (or `F9`) starts and stops a recording. Tracking must be running. While
+  it records, the status bar shows **REC** and the time.
+- **File > Record the camera video**: on by default. Turn it off to keep only the data file, without
+  the picture.
+- **File > Open recordings folder** opens the folder.
+
+Recordings go to the `.output` folder next to the app: the app's folder in the release build, the
+repo root when you run from source. Each one is named `session-YYYYMMDD-HHMMSS`: an `.mp4` video
+and a `.mp4.log` data file (only `.log` when the video is off).
+
+The data file is JSON Lines: one JSON record per line, each with a `type`. Format 1:
+
+| Type | What it holds |
+|---|---|
+| `session` | First line: format, app version, start time, video file name, frame size, settings in use |
+| `frame` | One per tracked frame: time in seconds, rates, and per hand its landmarks, pose and controls |
+| `settings` | A setting changed while recording |
+| `log` | A line the app printed |
+| `end` | Last line: frame count, frames left out of the video, whether the video was written |
+
+The video plays in real time at the camera's frame rate: each tracked frame shows until the next
+one, and a `frame` record's `video_frame` is its picture's index in the video. If the disk can't
+keep up, some frames are left out of the video (their data is still kept, with `video_frame` empty).
+They are counted in `end`.
+
+**Privacy:** the video shows you and your room. Check it before you share it. In the data file,
+paths and URLs in the settings are replaced with `<redacted>`, and the log has folders, whole URLs
+and your user name removed. The data file still holds your hand landmarks and poses.
+`.output` is ignored by git.
+
 ---
 
 ## 8. Calibrate

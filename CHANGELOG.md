@@ -20,6 +20,13 @@ What changed for users in each version. The format follows
   leaves the picture stops sooner, and one that was barely moving stays put. When the hand is found
   again, it blends to its real pose over 0.1 s. Fingers, trigger, grip and gesture stay as they were
   while the hand is lost. This is not tested in VR yet.
+- **Session recording** (toolbar **Record** or F9): saves the camera video and, next to it, a data
+  file with what the tracker made of every frame, to the `.output` folder next to the app. Use it to
+  study a problem or replay it later. **File > Record the camera video** (on by default) turns the
+  video off to keep only the data. **File > Open recordings folder** opens the folder. The video
+  shows you and your room, so check it before you share it. The data file has paths, URLs and your
+  user name removed from the settings and the log. Recording never slows tracking: if the disk can't
+  keep up, frames are left out of the video, not delayed.
 
 ### Changed
 - A hand out of view keeps its side and its state (smoothing, grip, gesture) for at least as long as

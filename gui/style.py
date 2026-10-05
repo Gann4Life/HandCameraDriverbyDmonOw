@@ -8,6 +8,7 @@ PREDICTED_COLOR = QColor(200, 130, 255)
 WARNING_COLOR = QColor(255, 170, 0)
 OK_COLOR = QColor(110, 210, 110)
 MUTED_COLOR = QColor(140, 140, 140)
+RECORDING_COLOR = QColor(235, 70, 70)
 
 
 def apply_dark_theme(app: QApplication):
