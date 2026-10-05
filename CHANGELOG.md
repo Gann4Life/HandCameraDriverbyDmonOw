@@ -14,6 +14,13 @@ What changed for users in each version. The format follows
   tilt the hands.
 - **Calibrate gestures** (toolbar): records your open hand and your fist and fits each finger's
   curl range to the active preset's view.
+- **Session recording** (toolbar **Record** or F9): saves the camera video and, next to it, a data
+  file with what the tracker made of every frame, to the `.output` folder next to the app. Use it to
+  study a problem or replay it later. **File > Record the camera video** (on by default) turns the
+  video off to keep only the data. **File > Open recordings folder** opens the folder. The video
+  shows you and your room, so check it before you share it. The data file has paths, URLs and your
+  user name removed from the settings and the log. Recording never slows tracking: if the disk can't
+  keep up, frames are left out of the video, not delayed.
 
 ### Changed
 - The grip now holds by itself. Once it reaches **Grip holds from**, it keeps its peak until it

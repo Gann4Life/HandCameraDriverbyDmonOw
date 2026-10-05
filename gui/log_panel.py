@@ -56,6 +56,8 @@ class LogStream(QObject):
 
 
 class LogPanel(QPlainTextEdit):
+    text_appended = Signal(str)  # for a session recording
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
@@ -66,6 +68,7 @@ class LogPanel(QPlainTextEdit):
         self.moveCursor(QTextCursor.End)
         self.insertPlainText(text)
         self.moveCursor(QTextCursor.End)
+        self.text_appended.emit(text)
 
 
 def capture_output(panel: LogPanel):

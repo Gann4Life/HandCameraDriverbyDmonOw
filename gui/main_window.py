@@ -11,8 +11,8 @@ import json
 from pathlib import Path
 from typing import Dict, Optional
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QSplitter, QTabWidget, QVBoxLayout, QWidget
 
 import addons
@@ -28,9 +28,10 @@ from gui.log_panel import LogPanel, capture_output
 from gui.preset_bar import PresetBar
 from gui.settings_panel import SettingsPanel
 from gui.settings_schema import SETTINGS, Setting
-from gui.style import MUTED_COLOR, OK_COLOR, WARNING_COLOR
+from gui.style import MUTED_COLOR, OK_COLOR, RECORDING_COLOR, WARNING_COLOR
 from gui.tracker_worker import TrackerWorker
 from hand_data import TrackingFrame
+from session_recorder import OUTPUT_FOLDER, SessionRecorder, output_dir
 from utils.config_utils import get_value, set_value
 from version import APP_VERSION
 
@@ -49,12 +50,14 @@ class MainWindow(QMainWindow):
         self.config_path = config_path
         self.config = HandTracker.load_config(config_path)
         self.worker: Optional[TrackerWorker] = None
+        self.recorder: Optional[SessionRecorder] = None
         self._shown_sequence = -1
         self.steamvr: Optional[Path] = None  # picked by hand in Add-ons when it can't be found
         self.driver_missing = False
 
         self.log_panel = LogPanel()
         capture_output(self.log_panel)
+        self.log_panel.text_appended.connect(self._record_log)
 
         self.camera_view = CameraView()
         self.hand_view = HandView3D()
@@ -137,6 +140,17 @@ class MainWindow(QMainWindow):
         recenter_action.setToolTip(f"With Hands follow: The room. In {RECENTER_DELAY_S} seconds, the direction "
                                    "your headset faces becomes where the camera is: face it (R)")
         recenter_action.triggered.connect(self._start_recenter)
+        self.record_action = QAction("Record", self)
+        self.record_action.setShortcut(QKeySequence("F9"))
+        self.record_action.setToolTip(f"Record the camera and what the tracker sees, to the {OUTPUT_FOLDER} "
+                                      "folder next to the app, to study or replay later (F9)")
+        self.record_action.triggered.connect(self._toggle_recording)
+        record_video_action = QAction("Record the camera video", self, checkable=True,
+                                      checked=bool(get_value(self.config, "recording.video", True)))
+        record_video_action.setToolTip("Off: recordings keep only the tracking data, without the picture")
+        record_video_action.toggled.connect(self._set_record_video)
+        open_recordings_action = QAction("Open recordings folder", self)
+        open_recordings_action.triggered.connect(self._open_recordings)
         addons_action = QAction("Add-ons", self)
         addons_action.setToolTip("Install or update the SteamVR driver and WiLoR depth")
         addons_action.triggered.connect(lambda: self.show_addons())
@@ -149,11 +163,17 @@ class MainWindow(QMainWindow):
         for action in (self.start_action, swap_action, recenter_action, self.depth_action, self.calibrate_action):
             toolbar.addAction(action)
         toolbar.addSeparator()
+        toolbar.addAction(self.record_action)
+        toolbar.addSeparator()
         toolbar.addAction(addons_action)
 
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(save_action)
         file_menu.addAction(discard_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.record_action)
+        file_menu.addAction(record_video_action)
+        file_menu.addAction(open_recordings_action)
         file_menu.addSeparator()
         file_menu.addAction(addons_action)
         file_menu.addSeparator()
@@ -191,6 +211,61 @@ class MainWindow(QMainWindow):
         self.worker.recenter()
         self.statusBar().showMessage("Hands recentered on the camera.", 3000)
 
+    # ----- session recording
+
+    def _toggle_recording(self):
+        if self.recorder is None:
+            self._start_recording()
+        else:
+            self._stop_recording()
+
+    def _start_recording(self):
+        if self.worker is None:
+            self.statusBar().showMessage("Start tracking first.", 3000)
+            return
+        try:
+            self.recorder = SessionRecorder(self._recordings_dir(), self.config,
+                                            video=bool(get_value(self.config, "recording.video", True)))
+        except OSError as e:
+            QMessageBox.warning(self, "Record", f"Could not start recording:\n{e}")
+            return
+        self.worker.recorder = self.recorder
+        self.record_action.setText("Stop recording")
+        name = (self.recorder.video_path or self.recorder.data_path).name
+        self.statusBar().showMessage(f"Recording to {OUTPUT_FOLDER}\\{name} (F9 stops)", 5000)
+
+    def _stop_recording(self, wait: bool = False):
+        if self.recorder is None:
+            return
+        if self.worker is not None:
+            self.worker.recorder = None
+        recorder, self.recorder = self.recorder, None
+        recorder.stop(wait=wait)
+        self.record_action.setText("Record")
+        self.rec_label.setText("")
+        name = (recorder.video_path or recorder.data_path).name
+        self.statusBar().showMessage(f"Recorded {recorder.frames} frames to {OUTPUT_FOLDER}\\{name}", 8000)
+
+    def _record_log(self, text: str):
+        if self.recorder is not None:
+            self.recorder.log(text)
+
+    def _set_record_video(self, video: bool):
+        set_value(self.config, "recording.video", video)
+        self.write_config()
+
+    def _recordings_dir(self) -> Path:
+        return output_dir(addons.layout().app_dir)
+
+    def _open_recordings(self):
+        folder = self._recordings_dir()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            QMessageBox.warning(self, "Recordings", f"Could not create the recordings folder:\n{e}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
     def set_setting(self, key: str, value):
         """Change a setting as if edited in its panel, e.g. from a toolbar button."""
         panel = self.preset_panel if self.preset_panel.has(key) else self.app_panel
@@ -209,7 +284,9 @@ class MainWindow(QMainWindow):
         self.latency_label = QLabel()
         self.driver_label = QLabel()
         self.depth_label = QLabel()
-        for label in (self.fps_label, self.latency_label, self.driver_label, self.depth_label):
+        self.rec_label = QLabel()
+        self.rec_label.setStyleSheet(f"color: {RECORDING_COLOR.name()}; font-weight: bold")
+        for label in (self.rec_label, self.fps_label, self.latency_label, self.driver_label, self.depth_label):
             self.statusBar().addPermanentWidget(label)
             label.setContentsMargins(8, 0, 8, 0)
 
@@ -245,6 +322,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Tracking", 3000)
 
     def _on_tracking_stopped(self, reason: str):
+        self._stop_recording()
         self.worker = None
         self.start_action.setText("Start")
         self.camera_view.set_message(reason or "Tracking stopped. Press Start (F5) to resume.")
@@ -382,6 +460,9 @@ class MainWindow(QMainWindow):
         self.hand_view.set_frame(frame)
         self.live_panel.set_frame(frame)
         self._update_status(frame)
+        if self.recorder is not None:
+            seconds = int(self.recorder.elapsed_s)
+            self.rec_label.setText(f"● REC {seconds // 60}:{seconds % 60:02d}")
 
     def _update_status(self, frame: TrackingFrame):
         self.fps_label.setText(f"Tracking {frame.tracking_fps:.0f} fps  ·  camera {frame.camera_fps:.0f} fps")
@@ -431,4 +512,5 @@ class MainWindow(QMainWindow):
                 return
         self._timer.stop()
         self.stop_tracking(wait=True)
+        self._stop_recording(wait=True)
         event.accept()

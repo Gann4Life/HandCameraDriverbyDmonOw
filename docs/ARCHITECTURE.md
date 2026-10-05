@@ -36,7 +36,7 @@ Each layer may only import from the layers below it.
 |---|---|---|
 | Entry points | `app.py`, `Camera.py` `main()`, `calibrate.py` (legacy), `tools/` | Everything below |
 | GUI | `gui/` (including `gui/environments.py`, which checks the add-ons) | Engine, config, presets, `addons`. Never MediaPipe or the socket directly |
-| Engine | `Camera.HandTracker`, `gui/tracker_worker.py` (thread wrapper), `depth_assist` | Config, domain, I/O |
+| Engine | `Camera.HandTracker`, `gui/tracker_worker.py` (thread wrapper), `depth_assist`, `session_recorder` | Config, domain, I/O |
 | Config | `config_defaults`, `presets`, `builtin_presets`, `utils/config_utils` | Plain dicts. `config_defaults` collects each domain module's own `DEFAULTS` |
 | Domain | `hand_features`, `hand_controls`, `gesture_scores`, `hand_fit`, `hand_identity`, `hand_data`, `gesture_detector` (legacy) | Pure math and numpy. No Qt, no OpenCV windows, no sockets, no files |
 | I/O and platform | `utils/camera_utils`, `utils/socket_client`, `utils/win_process`, `addons` | The outside world |
@@ -111,6 +111,9 @@ which trade-off was made and why.
 - Tracking runs on its own thread; the GUI never blocks it, and it never blocks the GUI.
 - The per-frame budget is set by the camera (about 33 ms at 30 fps). Work that doesn't fit runs
   asynchronously on the newest frame, never by queueing old ones.
+- Session recordings are written on background threads behind bounded queues. If the disk falls
+  behind, frames are left out of the video (their data is kept). Only if the data queue also fills are records dropped, and counted in the
+  `end` record. Tracking is never delayed.
 - No optimisation without numbers: measure before and after (per-frame latency, fps, CPU/GPU), on the
   same recorded clip when possible, and include the numbers in the change.
 
