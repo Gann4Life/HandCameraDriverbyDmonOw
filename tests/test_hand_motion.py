@@ -41,8 +41,8 @@ def test_a_hand_moving_steadily_keeps_going_the_same_way_when_lost():
     positions = [(0.5 * i / FPS, 0.0, -0.4) for i in range(5)]  # 0.5 m/s to the right
     last = track(predictor, positions)
     one_frame = predictor.predict("left", last + 1 / FPS)
-    # About where it would be by now, a little short because it slows down
-    assert one_frame.camera_position[0] == pytest.approx(positions[-1][0] + 0.5 / FPS, rel=0.1)
+    # Where it would be by now: a frame in, it still has its full speed
+    assert one_frame.camera_position[0] == pytest.approx(positions[-1][0] + 0.5 / FPS, rel=0.02)
     assert one_frame.camera_position[1:] == pytest.approx(positions[-1][1:], abs=1e-6)
     later = predictor.predict("left", last + 0.2)
     assert later.camera_position[0] > one_frame.camera_position[0]
@@ -95,7 +95,8 @@ def test_a_lost_hand_keeps_its_full_speed_at_first():
     predictor = MotionPredictor(0.3)
     speed = 3.0
     # Crossing the middle of the picture, nowhere near an edge
-    last = track(predictor, [(speed * i / FPS, 0.0, -0.4) for i in range(5)], image=[(0.2 + 0.1 * i, 0.5) for i in range(5)])
+    image = [(0.2 + 0.1 * i, 0.5) for i in range(5)]
+    last = track(predictor, [(speed * i / FPS, 0.0, -0.4) for i in range(5)], image=image)
     for i in range(1, 4):
         t = MOMENTUM_SECONDS * i / 3
         moved = predictor.predict("left", last + t).camera_position[0] - speed * 4 / FPS
@@ -115,8 +116,12 @@ def test_a_swinging_hand_keeps_curving_while_lost():
     a = angles[-1] + speed / radius * t
     on_circle = np.array((radius * math.sin(a), radius * (1 - math.cos(a)), -0.4))
     heading = np.array((math.cos(angles[-1]), math.sin(angles[-1]), 0.0))
-    straight_on = np.array((radius * math.sin(angles[-1]), radius * (1 - math.cos(angles[-1])), -0.4)) + heading * speed * t
+    straight_on = np.array(positions[-1]) + heading * speed * t
     assert np.linalg.norm(end - on_circle) < 0.3 * np.linalg.norm(straight_on - on_circle)
+    # Slowing down later, it stays on the arc instead of spiralling in toward the elbow
+    centre = np.array((0.0, radius))
+    later = predictor.predict("left", last + 0.15).camera_position
+    assert np.linalg.norm(later[:2] - centre) == pytest.approx(radius, rel=0.1)
 
 
 def test_a_punch_keeps_going_away_from_the_camera():
@@ -154,14 +159,15 @@ def test_depth_wobbling_under_the_noise_level_still_moves_with_its_trend():
 def test_two_frames_of_depth_change_are_not_enough_to_move_depth():
     # A hand turning or curling changes one camera's depth by over 10 cm a frame for two frames
     predictor = MotionPredictor(0.3)
-    positions = [(0.6 * i / FPS, 0.0, -0.4) for i in range(3)] + [(0.6 * 3 / FPS, 0.0, -0.28), (0.6 * 4 / FPS, 0.0, -0.16)]
+    positions = [(0.6 * i / FPS, 0.0, -0.4) for i in range(3)]
+    positions += [(0.6 * 3 / FPS, 0.0, -0.28), (0.6 * 4 / FPS, 0.0, -0.16)]
     last = track(predictor, positions)
     assert predictor.predict("left", last + 0.2).camera_position[2] == pytest.approx(-0.16, abs=1e-9)
 
 
 def test_fit_curve_with_two_steps_goes_straight_at_their_speed():
     curve = fit_curve([0.0, 1 / FPS, 2 / FPS], np.array(((0.0, 0.0), (0.03, 0.0), (0.06, 0.03))))
-    assert curve.turn_rate == 0.0 and curve.along == 0.0
+    assert curve.turn_rate == 0.0 and curve.speed_change == 0.0
     assert np.linalg.norm(curve.velocity) == pytest.approx(0.5 * (0.9 + math.hypot(0.9, 0.9)))
     assert curve.velocity[0] == pytest.approx(curve.velocity[1])  # the last step's heading
 
@@ -187,11 +193,48 @@ def test_a_wrist_that_jumps_across_the_picture_is_left_out_of_the_fit():
     assert prediction.camera_position[0] - 0.3 == pytest.approx(expected, rel=0.1)
 
 
-def test_a_lost_hand_is_never_moved_faster_than_the_cap():
+def test_a_lost_hand_is_moved_at_the_cap_when_it_seemed_faster():
     predictor = MotionPredictor(1.0)
-    last = track(predictor, [(5.0 * i / FPS, 0.0, -0.4) for i in range(5)], image=[(0.1 + 0.05 * i, 0.5) for i in range(5)])
+    image = [(0.1 + 0.05 * i, 0.5) for i in range(5)]
+    last = track(predictor, [(5.0 * i / FPS, 0.0, -0.4) for i in range(5)], image=image)
     one_frame = predictor.predict("left", last + 1 / FPS).camera_position[0] - 5.0 * 4 / FPS
-    assert one_frame <= MAX_SPEED_M_S / FPS + 1e-9
+    assert one_frame == pytest.approx(MAX_SPEED_M_S / FPS, rel=0.02)
+
+
+def test_a_hand_speeding_up_is_not_moved_faster_than_when_it_was_lost():
+    predictor = MotionPredictor(0.3)
+    xs = [0.5 * (1.0 + 0.5 * i) * i / FPS for i in range(5)]   # from 0.5 m/s, faster each frame
+    image = [(0.2 + x, 0.5) for x in xs]
+    last = track(predictor, [(x, 0.0, -0.4) for x in xs], image=image)
+    lost_at = (xs[-1] - xs[-2]) * FPS
+    moved = predictor.predict("left", last + MOMENTUM_SECONDS).camera_position[0] - xs[-1]
+    assert moved <= lost_at * 1.15 * MOMENTUM_SECONDS
+
+
+def test_a_hand_setting_off_from_rest_is_not_taken_for_a_jump():
+    predictor = MotionPredictor(0.3)
+    image = [(0.4, 0.5)] * 4 + [(0.47, 0.5)]
+    positions = [(0.0, 0.0, -0.4)] * 4 + [(0.042, 0.0, -0.4)]
+    last = track(predictor, positions, image=image)
+    assert predictor.predict("left", last + 0.1).camera_position[0] > 0.042 + 0.02
+
+
+def test_a_hand_turning_back_carries_on_the_new_way_without_hooking():
+    # A punch pulled back: right, right, right, then left, left, left
+    predictor = MotionPredictor(0.3)
+    xs = [0.0, 0.05, 0.1, 0.15, 0.1, 0.05, 0.0]
+    last = track(predictor, [(x, 0.0, -0.4) for x in xs], image=[(0.5 + x, 0.5) for x in xs])
+    moved = predictor.predict("left", last + 0.1).camera_position - np.array((0.0, 0.0, -0.4))
+    assert moved[0] < -0.1
+    assert abs(moved[1]) < 0.01   # straight back, no turn from the reversal
+
+
+def test_a_fast_hand_about_to_cross_an_edge_is_leaving():
+    # Not near the edge yet (0.85), but at 3 picture widths a second it crosses it within a frame or two
+    predictor = MotionPredictor(0.3)
+    image = [(0.45 + 0.1 * i, 0.5) for i in range(5)]
+    last = track(predictor, [(1.8 * i / FPS, 0.0, -0.4) for i in range(5)], image=image)
+    assert predictor.predict("left", last + 1 / FPS).leaving
 
 
 def test_past_the_horizon_there_is_no_prediction():
@@ -214,7 +257,8 @@ def test_the_prediction_comes_to_rest():
     near_end = predictor.predict("left", last + 0.9).camera_position[0]
     end = predictor.predict("left", last + 1.0).camera_position[0]
     assert end - near_end < 0.002
-    assert end - 4 / FPS < 0.25
+    assert end - 4 / FPS == pytest.approx(1.0 * carried_distance(1.0, MOMENTUM_SECONDS, POSITION_DAMPING_SECONDS),
+                                          rel=0.02)
 
 
 def test_a_hand_leaving_the_picture_eases_to_a_stop_instead_of_continuing():

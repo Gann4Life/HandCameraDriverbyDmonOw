@@ -9,10 +9,10 @@ a stop instead, and one that was barely moving holds still. When the hand is
 found again, the pose blends from where it was predicted to where it is
 measured.
 
-A lost hand carries on along a curve, not a straight line: the fitted
-acceleration splits into a turn (the heading keeps turning at the same rate,
-as a swing around the elbow does) and a change of speed along the path (a
-punch that was speeding up keeps speeding up). It keeps its full speed for
+A lost hand carries on along a curve, not a straight line: the heading and
+speed of each step between its tracked frames are fitted against time, so a
+swing keeps bending as it was (an arc around the elbow keeps its radius) and
+a hand that was slowing down keeps slowing down. It keeps its full speed for
 MOMENTUM_SECONDS, then eases off, so a prediction always comes to rest.
 """
 import math
@@ -41,8 +41,9 @@ POSITION_DAMPING_SECONDS = 0.2
 DEPTH_DAMPING_SECONDS = 0.2
 ROTATION_DAMPING_SECONDS = 0.2
 LEAVING_DAMPING_SECONDS = 0.05
-# The heading of a lost hand's path turns at most this fast, and this far in all:
-# at low speed a little noise in the acceleration is a sharp turn
+# The heading of a lost hand's path turns at most this fast when it is lost,
+# and this far in all: a little noise in the headings of short steps is a
+# sharp turn
 MAX_PATH_TURN_RATE = 4.0 * math.pi
 MAX_PATH_TURN_DEG = 180.0
 # A lost hand speeds up to at most this many times the speed it was lost at.
@@ -112,17 +113,20 @@ class _Motion:
     start: _Sample                     # the last measured frame
     position: np.ndarray               # the pose sent for it, where the motion starts
     rotation: Quaternion
-    times: np.ndarray                  # seconds since start.time, every TRAJECTORY_STEP to the horizon
-    camera_offsets: np.ndarray         # len(times) x 3: metres from position
-    image_offsets: np.ndarray          # len(times) x 2: from start.image_wrist
-    turns: np.ndarray                  # len(times) x 3: extra rotation, as rotation vectors
+    step: float                        # seconds between the rows of table, from start.time
+    # One row per step: camera offset (metres from position, 3), image offset
+    # (from start.image_wrist, 2), extra rotation (a rotation vector, 3)
+    table: np.ndarray
+    path_ahead: np.ndarray             # PATH_POINTS x 2 image points out to the horizon
     leaving: bool
 
     def at(self, tau: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """(camera offset, image offset, turn) tau seconds into the gap."""
-        def sample(rows: np.ndarray) -> np.ndarray:
-            return np.array([np.interp(tau, self.times, column) for column in rows.T])
-        return sample(self.camera_offsets), sample(self.image_offsets), sample(self.turns)
+        """(camera offset, image offset, turn) tau seconds into the gap, between the table's rows."""
+        position = min(max(tau / self.step, 0.0), len(self.table) - 1.0)
+        row = min(int(position), len(self.table) - 2)
+        fraction = position - row
+        values = self.table[row] * (1.0 - fraction) + self.table[row + 1] * fraction
+        return values[:3], values[3:5], values[5:]
 
 
 @dataclass
@@ -169,10 +173,16 @@ def quat_from_rotation_vector(v: np.ndarray) -> Quaternion:
     return (math.cos(angle / 2.0), float(axis[0] * s), float(axis[1] * s), float(axis[2] * s))
 
 
-def momentum(s: np.ndarray, hold_seconds: float, damping_seconds: float) -> np.ndarray:
-    """How much of its speed a lost hand keeps s seconds in: all of it for hold_seconds, then decaying."""
+def speed_kept(s: np.ndarray, hold_seconds: float, damping_seconds: float) -> np.ndarray:
+    """The fraction of its speed a lost hand keeps s seconds in: all of it for hold_seconds, then decaying."""
     s = np.asarray(s, dtype=float)
     return np.exp(-np.maximum(s - hold_seconds, 0.0) / damping_seconds)
+
+
+def carried_distance(tau: float, hold_seconds: float, damping_seconds: float) -> float:
+    """How far a unit speed carries in tau seconds with speed_kept(): its integral from 0 to tau."""
+    held = min(tau, hold_seconds)
+    return held + damping_seconds * (1.0 - math.exp(-max(tau - hold_seconds, 0.0) / damping_seconds))
 
 
 def _integrate(s: np.ndarray, velocities: np.ndarray) -> np.ndarray:
@@ -181,9 +191,9 @@ def _integrate(s: np.ndarray, velocities: np.ndarray) -> np.ndarray:
     return np.vstack((np.zeros((1, velocities.shape[1])), np.cumsum(steps, axis=0)))
 
 
-def _speed_along(s: np.ndarray, speed: float, along: float) -> np.ndarray:
+def _changing_speed(s: np.ndarray, speed: float, speed_change: float) -> np.ndarray:
     """The speed the fitted change of speed leads to, never backwards nor past MAX_SPEED_GAIN times the start."""
-    return np.clip(speed + along * s, 0.0, MAX_SPEED_GAIN * speed)
+    return np.clip(speed + speed_change * s, 0.0, MAX_SPEED_GAIN * speed)
 
 
 @dataclass
@@ -191,7 +201,7 @@ class Curve:
     """Motion in a plane at the last sample: heading turning at a steady rate, speed changing at a steady rate."""
     velocity: np.ndarray               # 2D, per second
     turn_rate: float                   # rad/s, counterclockwise in the plane's axes
-    along: float                       # change of speed, per second squared
+    speed_change: float                # per second squared
 
 
 def fit_curve(times: Sequence[float], points: np.ndarray) -> Curve:
@@ -213,7 +223,13 @@ def fit_curve(times: Sequence[float], points: np.ndarray) -> Curve:
     dt = np.diff(times)
     if np.any(dt <= 1e-6):
         return still
+    middle = 0.5 * (times[1:] + times[:-1]) - times[-1]   # each step's time, from the last sample
     steps = np.diff(points, axis=0)
+    # Only the steps since the hand last turned back: across a reversal (a punch
+    # pulled back, a shake) the heading flips half a turn, which is no turn rate
+    back = np.nonzero(steps @ steps[-1] < 0.0)[0]
+    if len(back):
+        steps, dt, middle = steps[back[-1] + 1:], dt[back[-1] + 1:], middle[back[-1] + 1:]
     speeds = np.linalg.norm(steps, axis=1) / dt
     if speeds[-1] < 1e-9:
         return still
@@ -222,19 +238,19 @@ def fit_curve(times: Sequence[float], points: np.ndarray) -> Curve:
         # Too few steps to tell a turn or a change of speed from noise: straight on, at their speed
         heading = headings[-1]
         return Curve(float(np.mean(speeds)) * np.array((math.cos(heading), math.sin(heading))), 0.0, 0.0)
-    middle = 0.5 * (times[1:] + times[:-1]) - times[-1]   # each step's time, from the last sample
     # Long steps tell their heading best: a step of noise points anywhere
     turn_rate, heading = np.polyfit(middle, headings, 1, w=np.maximum(speeds, 1e-9))
-    along, speed = np.polyfit(middle, speeds, 1)
+    speed_change, speed = np.polyfit(middle, speeds, 1)
     speed = max(float(speed), 0.0)
-    return Curve(speed * np.array((math.cos(heading), math.sin(heading))), float(turn_rate), float(along))
+    return Curve(speed * np.array((math.cos(heading), math.sin(heading))), float(turn_rate), float(speed_change))
 
 
 def curve_offsets(s: np.ndarray, curve: Curve, hold_seconds: float, damping_seconds: float) -> np.ndarray:
     """
-    Offsets along a curve at the times s (from 0): its heading keeps turning
-    at its rate, its speed keeps changing at its rate, and the speed eases off
-    after hold_seconds.
+    Offsets along a curve at the times s (from 0): its speed keeps changing at
+    its rate and eases off after hold_seconds, and it keeps bending as it was
+    (the heading turns with the distance travelled, so an arc keeps its radius
+    as the hand slows down instead of spiralling in).
 
     Returns:
         len(s) x 2 offsets from the start
@@ -242,10 +258,11 @@ def curve_offsets(s: np.ndarray, curve: Curve, hold_seconds: float, damping_seco
     speed = float(np.linalg.norm(curve.velocity))
     if speed < 1e-9:
         return np.zeros((len(s), 2))
-    turn_rate = float(np.clip(curve.turn_rate, -MAX_PATH_TURN_RATE, MAX_PATH_TURN_RATE))
+    speeds = _changing_speed(s, speed, curve.speed_change) * speed_kept(s, hold_seconds, damping_seconds)
+    curvature = float(np.clip(curve.turn_rate, -MAX_PATH_TURN_RATE, MAX_PATH_TURN_RATE)) / speed
     limit = math.radians(MAX_PATH_TURN_DEG)
-    angle = math.atan2(curve.velocity[1], curve.velocity[0]) + np.clip(turn_rate * s, -limit, limit)
-    speeds = _speed_along(s, speed, curve.along) * momentum(s, hold_seconds, damping_seconds)
+    travelled = _integrate(s, speeds[:, None])[:, 0]
+    angle = math.atan2(curve.velocity[1], curve.velocity[0]) + np.clip(curvature * travelled, -limit, limit)
     return _integrate(s, speeds[:, None] * np.column_stack((np.cos(angle), np.sin(angle))))
 
 
@@ -255,9 +272,9 @@ def line_offsets(s: np.ndarray, velocity: float, acceleration: float,
     speed = abs(velocity)
     if speed < 1e-9:
         return np.zeros((len(s), 1))
-    along = acceleration if velocity > 0.0 else -acceleration
-    speeds = math.copysign(1.0, velocity) * _speed_along(s, speed, along) * momentum(s, hold_seconds, damping_seconds)
-    return _integrate(s, speeds[:, None])
+    speed_change = acceleration if velocity > 0.0 else -acceleration
+    speeds = _changing_speed(s, speed, speed_change) * speed_kept(s, hold_seconds, damping_seconds)
+    return _integrate(s, math.copysign(1.0, velocity) * speeds[:, None])
 
 
 def fit_motion(times: Sequence[float], points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -410,7 +427,7 @@ class MotionPredictor:
         # Faster is a misread: the cap scales the change of speed too
         speed = math.hypot(float(np.linalg.norm(across.velocity)), depth_velocity)
         scale = min(1.0, MAX_SPEED_M_S / max(speed, 1e-9))
-        across = Curve(across.velocity * scale, across.turn_rate, across.along * scale)
+        across = Curve(across.velocity * scale, across.turn_rate, across.speed_change * scale)
         depth_velocity, depth_acceleration = depth_velocity * scale, depth_acceleration * scale
 
         hold, damping = MOMENTUM_SECONDS, POSITION_DAMPING_SECONDS
@@ -419,37 +436,28 @@ class MotionPredictor:
         if leaving:
             hold, damping = 0.0, LEAVING_DAMPING_SECONDS
 
-        s = np.append(np.arange(0.0, horizon, TRAJECTORY_STEP), horizon)
-        camera_offsets = np.column_stack((
-            curve_offsets(s, across, hold, damping),
-            line_offsets(s, depth_velocity, depth_acceleration, hold, min(damping, DEPTH_DAMPING_SECONDS))))
-        image_offsets = curve_offsets(s, image, hold, damping)
+        s = np.linspace(0.0, horizon, max(1, math.ceil(horizon / TRAJECTORY_STEP)) + 1)
         turn_damping = min(damping, ROTATION_DAMPING_SECONDS)
-        turns = angular_velocity * np.array([carried_distance(t, hold, turn_damping) for t in s])[:, None]
+        turns = angular_velocity * _integrate(s, speed_kept(s, hold, turn_damping)[:, None])
         limit = math.radians(MAX_EXTRA_TURN_DEG)
-        sizes = np.maximum(np.linalg.norm(turns, axis=1, keepdims=True), 1e-12)
-        turns = turns * np.minimum(1.0, limit / sizes)
-        return _Motion(start=start, position=sent[0], rotation=sent[1], times=s, camera_offsets=camera_offsets,
-                       image_offsets=image_offsets, turns=turns, leaving=leaving)
+        turns = turns * np.minimum(1.0, limit / np.maximum(np.linalg.norm(turns, axis=1, keepdims=True), 1e-12))
+        image_offsets = curve_offsets(s, image, hold, damping)
+        table = np.column_stack((
+            curve_offsets(s, across, hold, damping),
+            line_offsets(s, depth_velocity, depth_acceleration, hold, min(damping, DEPTH_DAMPING_SECONDS)),
+            image_offsets, turns))
+        # The path ahead is the same on every frame of the gap: drawn from here
+        ahead = np.linspace(0, len(s) - 1, PATH_POINTS + 1).round().astype(int)[1:]
+        return _Motion(start=start, position=sent[0], rotation=sent[1], step=float(s[1] - s[0]), table=table,
+                       path_ahead=start.image_wrist + image_offsets[ahead], leaving=leaving)
 
     def _evaluate(self, state: _HandState, motion: _Motion, tau: float) -> Prediction:
         camera_offset, image_offset, turn = motion.at(tau)
         rotation = quat_multiply(quat_from_rotation_vector(turn), motion.rotation)
+        path = np.vstack([np.array([s.image_wrist for s in state.history]), motion.path_ahead])
         return Prediction(camera_position=motion.position + camera_offset, rotation=rotation,
                           image_wrist=motion.start.image_wrist + image_offset, image_offset=image_offset,
-                          leaving=motion.leaving, path=self._path(state.history, motion))
-
-    def _path(self, history: List[_Sample], motion: _Motion) -> np.ndarray:
-        """Tracked wrists, then the predicted path out to prediction_seconds."""
-        ahead = [motion.start.image_wrist + motion.at(self.prediction_seconds * i / PATH_POINTS)[1]
-                 for i in range(1, PATH_POINTS + 1)]
-        return np.array([s.image_wrist for s in history] + ahead)
-
-
-def carried_distance(tau: float, hold_seconds: float, damping_seconds: float) -> float:
-    """How far a unit speed carries in tau seconds with momentum(): the integral of it from 0 to tau."""
-    held = min(tau, hold_seconds)
-    return held + damping_seconds * (1.0 - math.exp(-max(tau - hold_seconds, 0.0) / damping_seconds))
+                          leaving=motion.leaving, path=path)
 
 
 def _without_jump(history: List[_Sample]) -> List[_Sample]:
@@ -460,9 +468,9 @@ def _without_jump(history: List[_Sample]) -> List[_Sample]:
     times = np.array([s.time for s in history])
     steps = np.linalg.norm(np.diff(wrists, axis=0), axis=1)
     speeds = steps / np.maximum(np.diff(times), 1e-6)
-    # A hand setting off from rest isn't jumping: compare with at least the speed a lost hand is moved at
-    usual = max(float(np.median(speeds[:-1])), MIN_IMAGE_SPEED)
-    if steps[-1] >= JUMP_MIN_IMAGE and speeds[-1] > JUMP_RATIO * usual:
+    usual = float(np.median(speeds[:-1]))
+    # After frames of rest, a big step can't be told from the hand setting off: only a moving hand can jump
+    if usual >= MIN_IMAGE_SPEED and steps[-1] >= JUMP_MIN_IMAGE and speeds[-1] > JUMP_RATIO * usual:
         return history[:-1]
     return history
 
