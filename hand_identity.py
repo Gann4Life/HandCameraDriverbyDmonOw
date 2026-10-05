@@ -211,6 +211,30 @@ class HandIdentityTracker:
             return came_from_other or taken
         self.new_sides = {sides[det.index] for det in kept if is_new(det)}
 
+    def follow(self, side: str, wrist: Tuple[float, float]) -> None:
+        """
+        Move a lost hand's track to where the hand is predicted to be (see
+        hand_motion), so the hand found there again is the same one. The track's
+        time stays its last sighting: how long it is remembered doesn't change.
+        A prediction running onto the other hand, still in view, leaves the track
+        where it was: the visible hand must not be taken for the lost one.
+        """
+        track = self._tracks.get(side)
+        if track is None:
+            return
+        wrist = (float(wrist[0]), float(wrist[1]))
+        other = self._tracks.get(other_side(side))
+        if other is not None and other.time > track.time and self._distance(wrist, other.wrist) <= self.continuity_radius:
+            return
+        track.wrist = wrist
+
+    def has_track(self, side: str) -> bool:
+        """
+        Whether a hand is still remembered on side. A single hand that changed
+        side drops its old track, so its prediction there must stop too.
+        """
+        return side in self._tracks
+
     def swap(self):
         """Exchange the two identities, as a manual correction."""
         left, right = self._tracks.get("left"), self._tracks.get("right")

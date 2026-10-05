@@ -14,6 +14,12 @@ What changed for users in each version. The format follows
   tilt the hands.
 - **Calibrate gestures** (toolbar): records your open hand and your fist and fits each finger's
   curl range to the active preset's view.
+- **Keep lost hands moving for** setting (Smoothing, saved per preset, 0.3 s by default, 0 turns it
+  off). A hand lost on a fast move (motion blur, a dropout) used to freeze where it was last seen and
+  jump when found again. Now it keeps going the way it was moving and slows to a stop. A hand that
+  leaves the picture stops sooner, and one that was barely moving stays put. When the hand is found
+  again, it blends to its real pose over 0.1 s. Fingers, trigger, grip and gesture stay as they were
+  while the hand is lost. This is not tested in VR yet.
 - **Session recording** (toolbar **Record** or F9): saves the camera video and, next to it, a data
   file with what the tracker made of every frame, to the `.output` folder next to the app. Use it to
   study a problem or replay it later. **File > Record the camera video** (on by default) turns the
@@ -23,6 +29,11 @@ What changed for users in each version. The format follows
   keep up, frames are left out of the video, not delayed.
 
 ### Changed
+- A hand out of view keeps its side and its state (smoothing, grip, gesture) for at least as long as
+  it is predicted, so a hand back within up to 1 s, depending on the setting above, is still the same
+  hand.
+- In the previews, a predicted hand is drawn in purple, with its path dashed on the camera picture,
+  and the live panel says "predicted (lost)".
 - The grip now holds by itself. Once it reaches **Grip holds from**, it keeps its peak until it
   stays under **Grip lets go below** for 0.1 s, so a value near the game's threshold no longer
   grabs and drops. Below **Grip holds from** the grip is analog, and the trigger is always analog. This replaces the

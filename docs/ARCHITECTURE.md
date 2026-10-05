@@ -18,7 +18,7 @@ The line format between them is a contract, documented in [PROTOCOL.md](PROTOCOL
 changes it alone.
 
 ```
-camera ─► CameraCapture ─► MediaPipe ─► HandIdentityTracker ─► hand_fit / pose ─► filters
+camera ─► CameraCapture ─► MediaPipe ─► HandIdentityTracker ─► hand_fit / pose ─► filters ─► hand_motion (MotionPredictor)
                                               │
                                               └─► hand_features ─► ControlMapper / gesture_scores
                                                                           │
@@ -38,7 +38,7 @@ Each layer may only import from the layers below it.
 | GUI | `gui/` (including `gui/environments.py`, which checks the add-ons) | Engine, config, presets, `addons`. Never MediaPipe or the socket directly |
 | Engine | `Camera.HandTracker`, `gui/tracker_worker.py` (thread wrapper), `depth_assist`, `session_recorder` | Config, domain, I/O |
 | Config | `config_defaults`, `presets`, `builtin_presets`, `utils/config_utils` | Plain dicts. `config_defaults` collects each domain module's own `DEFAULTS` |
-| Domain | `hand_features`, `hand_controls`, `gesture_scores`, `hand_fit`, `hand_identity`, `hand_data`, `gesture_detector` (legacy) | Pure math and numpy. No Qt, no OpenCV windows, no sockets, no files |
+| Domain | `hand_features`, `hand_controls`, `gesture_scores`, `hand_fit`, `hand_identity`, `hand_motion`, `hand_data`, `gesture_detector` (legacy) | Pure math and numpy. No Qt, no OpenCV windows, no sockets, no files |
 | I/O and platform | `utils/camera_utils`, `utils/socket_client`, `utils/win_process`, `addons` | The outside world |
 | Utilities | `utils/one_euro`, `utils/hand_size`, `version` | Nothing project-specific |
 
@@ -148,7 +148,8 @@ fixed.
 - `Camera.py` holds both the engine (`HandTracker`, ~900 lines: config loading, camera, pose, depth,
   filters, drawing, CLI preview) and the command-line entry. It needs splitting by responsibility,
   and `HandTracker` builds its own camera, MediaPipe model and socket instead of receiving them, so
-  none of its pose logic can be tested.
+  none of its pose logic can be tested. That includes `HandTracker.predict_lost_hands` and the
+  blend back to a found hand: they have no unit tests, only `hand_motion` itself does.
 - Defaults are repeated: `Camera.py` has about 25 `.get(key, default)` fallbacks that duplicate
   `DEFAULT_CONFIG` (and `TrackingFrame.hfov_deg` another).
 - Which settings rebuild the camera, model or filters lives twice: `Camera.setting_action` (an
@@ -160,12 +161,14 @@ fixed.
   stall tracking.
 - `gesture_detector.py` mixes quaternion math, legacy on/off gestures and handedness evidence. The
   quaternion helpers belong in a math module; the legacy gestures are superseded by `gesture_scores`.
+  `hand_motion` imports those helpers and adds rotation-vector helpers of its own, which belong in
+  the same module.
 - `calibrate.py` is a standalone OpenCV script that predates the GUI.
 - The driver parses `GESTURE:` but ignores it, so gestures never reach the game.
 - The WiLoR depth experiment (`depth_assist.py`, `gui/environments.py`, its installer and add-on) is
   planned for removal.
 - Tests cover only part of the domain code so far (`hand_features`, `hand_controls`, `gesture_scores`,
-  `utils/one_euro`, `HandData.to_protocol_string`, `utils/socket_client`, `hand_identity`, `presets`
-  migration, one recorded frame of `hand_fit`) and the driver's line
+  `utils/one_euro`, `HandData.to_protocol_string`, `utils/socket_client`, `hand_identity`, `hand_motion`,
+  `presets` migration, one recorded frame of `hand_fit`) and the driver's line
   parser and socket server. There are no GUI smoke tests, recorded-clip tests or tests of the
   driver's pose logic yet.

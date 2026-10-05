@@ -167,6 +167,10 @@ SETTINGS = (
             minimum=0.0, maximum=10.0, step=0.1, advanced=True),
     Setting("calibration.filter.d_cutoff", "Speed cutoff", "float", "Smoothing", minimum=0.1, maximum=5.0,
             step=0.1, advanced=True),
+    Setting("calibration.prediction_seconds", "Keep lost hands moving for", "float", "Smoothing",
+            minimum=0.0, maximum=1.0, step=0.05, unit=" s",
+            help="A hand lost on a fast move keeps going the way it was moving, slowing down, instead "
+                 "of freezing. 0 turns it off."),
 
     # Gestures
     # Curl is 0 for a straight finger and 1 for a fully curled one (see the Hands tab)

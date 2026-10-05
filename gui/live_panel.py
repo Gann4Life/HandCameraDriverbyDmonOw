@@ -74,7 +74,7 @@ class _HandReadout(QGroupBox):
                 bar.setFormat("%p%")
             return
         data = hand.data
-        self.state.setText("yes")
+        self.state.setText("predicted (lost)" if hand.predicted else "yes")
         self.gesture.setText(data.gesture)
         self.depth.setText(f"{-hand.camera_position[2] * 100:.0f} cm from the camera")
         self.position.setText("  ".join(f"{axis} {v:+.2f}" for axis, v in zip("XYZ", data.position)) + " m")

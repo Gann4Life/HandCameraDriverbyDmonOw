@@ -279,7 +279,7 @@ and restart it.
 
 ### Presets
 Each camera position keeps its own settings in a **preset**: view, mirroring, placement
-(position offset, camera tilt, hand rotation), smoothing, gestures and hand identity. Switching preset puts all of them back, so tuning one
+(position offset, camera tilt, hand rotation), smoothing (including how long a lost hand keeps moving), gestures and hand identity. Switching preset puts all of them back, so tuning one
 position never undoes another. They are the settings on the **Preset** tab. The **App settings**
 tab has the ones that belong to the camera hardware or the whole app (camera index, resolution,
 field of view, tracking model, depth source, driver connection): they are the same in every

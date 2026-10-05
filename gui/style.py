@@ -3,6 +3,8 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 HAND_COLORS = {"left": QColor(80, 200, 255), "right": QColor(255, 160, 60)}
+# A lost hand moved along its predicted path, either side
+PREDICTED_COLOR = QColor(200, 130, 255)
 WARNING_COLOR = QColor(255, 170, 0)
 OK_COLOR = QColor(110, 210, 110)
 MUTED_COLOR = QColor(140, 140, 140)

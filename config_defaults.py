@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 from gesture_scores import DEFAULTS as GESTURE_DEFAULTS
 from hand_controls import DEFAULTS as CONTROL_DEFAULTS
+from hand_motion import DEFAULTS as MOTION_DEFAULTS
 
 # How a Touch controller sits in the hand: rolled from the flat-hand frame
 # toward the thumb, [pitch, yaw, roll] degrees. Each preset can tune its own.
@@ -49,6 +50,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "d_cutoff": 1.0,
             "ema": {"position": 0.7, "depth": 0.35, "rotation": 0.5},
         },
+        **MOTION_DEFAULTS,
     },
     "debug": {"show_video": True, "show_landmarks": True, "show_fps": True, "log_gestures": False},
     # The app checks the SteamVR driver when it starts and offers to install or update it

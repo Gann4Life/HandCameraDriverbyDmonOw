@@ -122,6 +122,9 @@ class TrackedHand:
     camera_points: Optional[np.ndarray] = None   # 21 x 3 joints in the same space, or None without a metric fit
     features: Optional["HandFeatures"] = None     # curls, splay, pinch; None without world landmarks
     gesture_scores: Dict[str, float] = field(default_factory=dict)  # 0..1 per gesture name
+    # Lost and moved along its predicted path (hand_motion); fingers and controls are its last tracked frame's
+    predicted: bool = False
+    path: Optional[np.ndarray] = None  # N x 2 normalised image points: tracked wrists, then the predicted path
 
 
 @dataclass
