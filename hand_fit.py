@@ -253,6 +253,11 @@ class HandFitter:
     PALM_AWAY_WEIGHT = 30.0
     # A warm start fitting worse than this (RMS pixels) also tries a fresh start
     REFIT_RMS_PX = 8.0
+    # A warm start whose joints are further than this (radians) from the bends
+    # MediaPipe read also tries last frame's pose with MediaPipe's bends. A
+    # finger curled toward the camera looks almost like a straight one, so a
+    # warm start can stay curled after the finger opens, with a small pixel error.
+    BENDS_DISAGREE = 0.8
     ITERATIONS = 4
     FRESH_ITERATIONS = 8
     SCOUT_ITERATIONS = 2
@@ -404,8 +409,13 @@ class HandFitter:
         if previous is not None:
             params, cost = self._solve(previous, observed, is_right, previous, self.ITERATIONS)
             candidates.append((score(params, cost), params))
-        refreshed = previous is None or (allow_refresh and
-                                         self._rms(candidates[0][1], observed, is_right) > self.REFIT_RMS_PX)
+            if self._bends is not None and np.max(np.abs(params[BENDS] - self._bends)) > self.BENDS_DISAGREE:
+                start = previous.copy()
+                start[BENDS] = self._bends
+                params, cost = self._solve(start, observed, is_right, previous, self.ITERATIONS)
+                candidates.append((score(params, cost), params))
+        warm = min(candidates, key=lambda c: c[0])[1] if candidates else None
+        refreshed = previous is None or (allow_refresh and self._rms(warm, observed, is_right) > self.REFIT_RMS_PX)
         if refreshed:
             # Start fresh from an open hand, a fist and MediaPipe's own bends, each
             # placed every way the palm fits. A short look at all of them, then

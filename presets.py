@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from builtin_presets import BUILTIN_PRESETS
 from config_defaults import DEFAULT_CONFIG
-from utils.config_utils import get_value, set_value
+from utils.config_utils import get_value, remove_value, set_value
 
 # The built-in presets (BUILTIN_PRESETS) are generated from the maintainer's
 # saved presets by tools/publish_presets.py.
@@ -31,6 +31,9 @@ RETIRED_DEFAULTS = {
 # user's too: presets store every setting, so these were saved, never chosen.
 # switch_frames 6 is too short for a depth misread in POV, which lasts a few frames.
 RETIRED_EVERYWHERE = {"tracking.identity.switch_frames": 6}
+# Settings that no longer exist; format 5 removes them from the config and every
+# preset. Steady grip/trigger snapped to 0/1; grip now holds by itself.
+REMOVED_KEYS = ("gestures.grip_latch", "gestures.trigger_latch")
 
 # Keys (and key prefixes, ending in ".") every preset shares
 SHARED_KEYS = (
@@ -42,7 +45,7 @@ SHARED_KEYS = (
 )
 # Settings that used to be shared: presets saved before take the value in use
 FORMERLY_SHARED = ("calibration.rotation_offset_deg.left", "calibration.rotation_offset_deg.right")
-FORMAT = 4
+FORMAT = 5
 # Top-level entries that are not settings
 META_KEYS = ("preset", "presets", "preset_format")
 
@@ -220,10 +223,13 @@ def migrate(config: Dict[str, Any]) -> None:
             _forget_retired_defaults(config)
         if version < 4:
             _retire_everywhere(config)
+        if version < 5:
+            _remove_keys(config)
         config["preset_format"] = FORMAT
         return
     config["preset_format"] = FORMAT
     _retire_everywhere(config)
+    _remove_keys(config)
     for key, old in RETIRED_DEFAULTS.items():
         if get_value(config, key) == old:
             set_value(config, key, get_value(DEFAULT_CONFIG, key))
@@ -274,6 +280,25 @@ def _retire_everywhere(config: Dict[str, Any]) -> None:
                 saved[key] = new
 
 
+def _remove_keys(config: Dict[str, Any]) -> None:
+    """
+    Format 5: REMOVED_KEYS go from the config in use and from every saved
+    preset; a built-in preset left as shipped is then no longer stored.
+    """
+    for key in REMOVED_KEYS:
+        remove_value(config, key)
+        for saved in stored(config).values():
+            saved.pop(key, None)
+    _drop_unchanged_builtins(config)
+
+
+def _drop_unchanged_builtins(config: Dict[str, Any]) -> None:
+    """Stop storing built-in presets that match their defaults, so they follow future defaults (see store)."""
+    for builtin in BUILTIN_PRESETS:
+        if stored(config).get(builtin) == default_values(builtin):
+            stored(config).pop(builtin)
+
+
 def _forget_retired_defaults(config: Dict[str, Any]) -> None:
     """Built-in presets drop the old defaults they were saved with; user presets keep theirs."""
     for builtin in BUILTIN_PRESETS:
@@ -283,8 +308,7 @@ def _forget_retired_defaults(config: Dict[str, Any]) -> None:
         for key, old in RETIRED_DEFAULTS.items():
             if saved.get(key) == old:
                 saved[key] = default_values(builtin)[key]
-        if saved == default_values(builtin):
-            stored(config).pop(builtin)
+    _drop_unchanged_builtins(config)
     name = active(config)
     if is_builtin(name):
         for key, old in RETIRED_DEFAULTS.items():

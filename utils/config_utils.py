@@ -21,3 +21,11 @@ def set_value(config: dict, key: str, value: Any) -> None:
     for part in path:
         node = node.setdefault(part, {})
     node[leaf] = value
+
+
+def remove_value(config: dict, key: str) -> None:
+    """Remove the value at a dotted key, if it is there."""
+    *path, leaf = key.split('.')
+    node = get_value(config, '.'.join(path)) if path else config
+    if isinstance(node, dict):
+        node.pop(leaf, None)
