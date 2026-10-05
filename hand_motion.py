@@ -71,9 +71,12 @@ DEPTH_MIN_STEPS = 3
 DEPTH_MAX_STEP_SHARE = 0.6
 # A tracked wrist that jumps this many times further than the frames before it
 # moved, and at least JUMP_MIN_IMAGE of the picture, is a misdetection or a
-# hand mistaken for the other: the fit leaves it out
+# hand mistaken for the other: the fit leaves it out. After frames of rest a
+# big step is the hand setting off, unless it is at least JUMP_FROM_REST_IMAGE
+# (4.5 picture widths a second at 30 fps): too far for a hand starting to move.
 JUMP_RATIO = 3.0
 JUMP_MIN_IMAGE = 0.05
+JUMP_FROM_REST_IMAGE = 0.15
 # A bad rotation estimate can't spin the hand further than this
 MAX_EXTRA_TURN_DEG = 90.0
 # A wrist this close to the picture's edge (fraction of the image), moving toward it, is leaving
@@ -179,12 +182,6 @@ def speed_kept(s: np.ndarray, hold_seconds: float, damping_seconds: float) -> np
     return np.exp(-np.maximum(s - hold_seconds, 0.0) / damping_seconds)
 
 
-def carried_distance(tau: float, hold_seconds: float, damping_seconds: float) -> float:
-    """How far a unit speed carries in tau seconds with speed_kept(): its integral from 0 to tau."""
-    held = min(tau, hold_seconds)
-    return held + damping_seconds * (1.0 - math.exp(-max(tau - hold_seconds, 0.0) / damping_seconds))
-
-
 def _integrate(s: np.ndarray, velocities: np.ndarray) -> np.ndarray:
     """Offsets from the start, by the trapezoid rule over the times s."""
     steps = 0.5 * (velocities[1:] + velocities[:-1]) * np.diff(s)[:, None]
@@ -198,9 +195,9 @@ def _changing_speed(s: np.ndarray, speed: float, speed_change: float) -> np.ndar
 
 @dataclass
 class Curve:
-    """Motion in a plane at the last sample: heading turning at a steady rate, speed changing at a steady rate."""
+    """Motion in a plane at the last sample: how fast it was turning and changing speed there."""
     velocity: np.ndarray               # 2D, per second
-    turn_rate: float                   # rad/s, counterclockwise in the plane's axes
+    turn_rate: float                   # rad/s at the last sample, counterclockwise; the path keeps its bend
     speed_change: float                # per second squared
 
 
@@ -208,8 +205,9 @@ def fit_curve(times: Sequence[float], points: np.ndarray) -> Curve:
     """
     The curve 2D samples were moving along at the last one: a straight line
     is fitted to the heading of each step between samples, and another to
-    their speed, against time. Unlike a quadratic fit to the points, this
-    follows a swing's arc however far it has turned.
+    their speed, against time, using only the steps since the hand last turned
+    back. Unlike a quadratic fit to the points, this follows a swing's arc
+    however far it has turned. With fewer than three steps it goes straight on.
 
     Args:
         times: Sample times in seconds, oldest first
@@ -469,10 +467,11 @@ def _without_jump(history: List[_Sample]) -> List[_Sample]:
     steps = np.linalg.norm(np.diff(wrists, axis=0), axis=1)
     speeds = steps / np.maximum(np.diff(times), 1e-6)
     usual = float(np.median(speeds[:-1]))
-    # After frames of rest, a big step can't be told from the hand setting off: only a moving hand can jump
-    if usual >= MIN_IMAGE_SPEED and steps[-1] >= JUMP_MIN_IMAGE and speeds[-1] > JUMP_RATIO * usual:
-        return history[:-1]
-    return history
+    if usual < MIN_IMAGE_SPEED:
+        jumped = steps[-1] >= JUMP_FROM_REST_IMAGE
+    else:
+        jumped = steps[-1] >= JUMP_MIN_IMAGE and speeds[-1] > JUMP_RATIO * usual
+    return history[:-1] if jumped else history
 
 
 def _depth_agrees(depths: np.ndarray) -> bool:
