@@ -60,6 +60,11 @@ class GestureClassifier:
         self._current: Dict[str, str] = {}
         self._candidate: Dict[str, Tuple[Optional[str], int]] = {}
 
+    def reset(self, hand_type: str):
+        """Forget one hand's gesture, for a hand that is new on this side."""
+        self._current.pop(hand_type, None)
+        self._candidate.pop(hand_type, None)
+
     def __call__(self, hand_type: str, scores: Dict[str, float]) -> str:
         enter = float(self.config["gesture_enter"])
         exit_ = float(self.config["gesture_exit"])

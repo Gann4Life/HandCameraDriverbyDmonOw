@@ -90,3 +90,16 @@ def test_finger_curls_are_smoothed_apart_from_trigger_and_grip():
     mapper("left", features(curl=(1.0,) * 5), 0.0)
     # The same hand's first curls sample isn't blended with its trigger/grip history
     assert mapper.finger_curls("left", features(), 0.01) == (0.0,) * 5
+
+
+def test_reset_forgets_a_held_latch_for_that_hand_only():
+    mapper = ControlMapper({"trigger_latch": True, "trigger_from_pinch": False})
+    on, off = DEFAULTS["latch_on"], DEFAULTS["latch_off"]
+    between = (0.0, index_curl_for_trigger((on + off) / 2), 0.0, 0.0, 0.0)
+    pressed = (0.0, index_curl_for_trigger(on + 0.05), 0.0, 0.0, 0.0)
+    for hand in ("left", "right"):
+        assert mapper(hand, features(curl=pressed), 0.0)[0] == 1.0
+    mapper.reset("left")
+    # Between the thresholds a held trigger stays held, a fresh one stays released
+    assert mapper("left", features(curl=between), NO_SMOOTHING_STEP_S)[0] == 0.0
+    assert mapper("right", features(curl=between), NO_SMOOTHING_STEP_S)[0] == 1.0

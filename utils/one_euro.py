@@ -100,6 +100,11 @@ class ExponentialFilter:
         self._value: Optional[Tuple[float, ...]] = None
         self._time: Optional[float] = None
 
+    def reset(self):
+        """Forget all history."""
+        self._value = None
+        self._time = None
+
     def __call__(self, value: Sequence[float], t: float) -> Tuple[float, ...]:
         value = tuple(float(v) for v in value)
         if not _all_finite(value):
@@ -128,6 +133,9 @@ class QuaternionExponentialFilter(ExponentialFilter):
 
 class PassThroughFilter:
     """No smoothing at all, for comparison."""
+
+    def reset(self):
+        """Nothing to forget."""
 
     def __call__(self, value: Sequence[float], t: float) -> Tuple[float, ...]:
         return tuple(float(v) for v in value)

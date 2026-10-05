@@ -9,7 +9,7 @@ evidence only overrides it when it persists.
 """
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 
 @dataclass
@@ -28,13 +28,40 @@ class _Track:
     contradictions: int = 0
 
 
+def other_side(side: str) -> str:
+    return "right" if side == "left" else "left"
+
+
+# A curl vote this clear counts as an opinion; below it, it is only noise of a flat hand
+CLEAR_CURL_VOTE = 0.2
+
+
+def combine_handedness_votes(curl: float, secondary: float, secondary_ignores_depth: bool) -> float:
+    """
+    One frame's left/right vote, in [-1, 1] (> 0 is left), from the finger-curl
+    vote and a secondary cue.
+
+    Curl leads: fingers only bend toward the palm, whatever the rotation. But it
+    reads MediaPipe's depth, which flips when MediaPipe sees the back of the hand,
+    and a flipped depth reverses the vote. The palm-away cue's sign uses only the
+    landmarks' x and y, so it cannot flip that way: when the two clearly disagree
+    the frame says nothing and the hand keeps its side. The price: in POV a palm
+    turned toward the camera also says nothing, so a hand on the wrong side cannot
+    correct itself while held that way.
+    """
+    if secondary_ignores_depth and abs(curl) >= CLEAR_CURL_VOTE and secondary * curl < 0:
+        return 0.0
+    return max(-1.0, min(1.0, 0.8 * curl + 0.2 * secondary))
+
+
 class HandIdentityTracker:
     """Assigns "left"/"right" to each frame's detections."""
 
     def __init__(self, continuity_radius: float = 0.15, memory_seconds: float = 0.4,
-                 switch_frames: int = 6, duplicate_radius: float = 0.05,
+                 switch_frames: int = 15, duplicate_radius: float = 0.05,
                  strong_evidence: float = 0.5, user_left_is_image_left: bool = True,
-                 order_weight: float = 1.5, order_full_separation: float = 0.2):
+                 order_weight: float = 1.5, order_full_separation: float = 0.2,
+                 lone_memory_seconds: float = 3.0):
         """
         Args:
             continuity_radius: Max wrist movement between frames (fraction of the
@@ -49,6 +76,9 @@ class HandIdentityTracker:
                 left-right order (0 disables it)
             order_full_separation: Horizontal gap (fraction of the image) at
                 which the order prior reaches full weight
+            lone_memory_seconds: For this long after only one hand was seen, a
+                hand showing up far away is taken to be that hand when it shows
+                up within FAST_MOVE_SECONDS, or its vote is not strong
         """
         self.continuity_radius = continuity_radius
         self.memory_seconds = memory_seconds
@@ -58,7 +88,14 @@ class HandIdentityTracker:
         self.user_left_is_image_left = user_left_is_image_left
         self.order_weight = order_weight
         self.order_full_separation = order_full_separation
+        self.lone_memory_seconds = lone_memory_seconds
         self._tracks: Dict[str, _Track] = {}
+        # (side, time) of the last frame with exactly one hand; None after two
+        self._lone: Optional[Tuple[str, float]] = None
+        # Sides whose hand in the last assign() is new there: it appeared, came
+        # back after memory_seconds, or changed side. Any per-hand history kept
+        # for the side belongs to another moment or another hand
+        self.new_sides: Set[str] = set()
 
     @staticmethod
     def _distance(a: Tuple[float, float], b: Tuple[float, float]) -> float:
@@ -70,6 +107,9 @@ class HandIdentityTracker:
     # Below this, a newly appearing hand is placed by image side instead: a weak
     # vote is typically a flat hand whose secondary signal may be inverted
     WEAK_EVIDENCE = 0.3
+    # A lone hand seen this recently is still the same hand, however far it jumped:
+    # a few dropped frames, far too short to swap one hand for the other
+    FAST_MOVE_SECONDS = 0.15
 
     def _side_from_evidence(self, det: HandDetection) -> str:
         if det.evidence >= self.WEAK_EVIDENCE:
@@ -79,24 +119,58 @@ class HandIdentityTracker:
         on_image_left = det.wrist[0] < 0.5
         return "left" if on_image_left == self.user_left_is_image_left else "right"
 
-    def _assign_single(self, det: HandDetection, recent: Dict[str, _Track]) -> str:
+    def _assign_single(self, det: HandDetection, recent: Dict[str, _Track], now: float) -> str:
         nearest = None
         if recent:
             side, track = min(recent.items(), key=lambda kv: self._distance(det.wrist, kv[1].wrist))
             if self._distance(det.wrist, track.wrist) <= self.continuity_radius:
                 nearest = side
         if nearest is None:
+            lone = self._lone_side(recent, now)
+            # Seen moments ago, it is the same hand moved fast. Back after a
+            # loss it may be the other hand, so a strong vote decides; anything
+            # less (a flat hand, one misread frame) defers to memory
+            just_seen = lone is not None and now - self._lone[1] <= self.FAST_MOVE_SECONDS
+            if lone is not None and (just_seen or abs(det.evidence) <= self.strong_evidence):
+                nearest = lone
+        if nearest is None:
             return self._side_from_evidence(det)
 
-        track = recent[nearest]
+        track = self._tracks[nearest]
         contrary = det.evidence > self.strong_evidence if nearest == "right" else det.evidence < -self.strong_evidence
         track.contradictions = track.contradictions + 1 if contrary else 0
         if track.contradictions >= self.switch_frames:
             track.contradictions = 0
-            return "right" if nearest == "left" else "left"
+            return other_side(nearest)
         return nearest
 
+    def _lone_side(self, recent: Dict[str, _Track], now: float) -> Optional[str]:
+        """
+        The side of the only hand seen lately, when no other hand is around.
+        With one hand in view a turning camera sweeps it across the image
+        faster than continuity_radius; this keeps it the same hand.
+        """
+        if self._lone is None or now - self._lone[1] > self.lone_memory_seconds:
+            return None
+        side = self._lone[0]
+        return side if other_side(side) not in recent and side in self._tracks else None
+
+    def _continuing(self, det: HandDetection, recent: Dict[str, _Track]) -> Optional[str]:
+        """The side whose recent track this detection continues, if any."""
+        near = [(self._distance(det.wrist, t.wrist), side) for side, t in recent.items()]
+        near = [n for n in near if n[0] <= self.continuity_radius]
+        return min(near)[1] if near else None
+
     def _assign_pair(self, a: HandDetection, b: HandDetection, recent: Dict[str, _Track]) -> Tuple[str, str]:
+        # A hand already being tracked keeps its side when another one shows
+        # up: a newcomer (often a partial hand at the edge) must not push it
+        # over through the left-right order prior
+        side_a, side_b = self._continuing(a, recent), self._continuing(b, recent)
+        if side_a is not None and side_b is None:
+            return side_a, other_side(side_a)
+        if side_b is not None and side_a is None:
+            return other_side(side_b), side_b
+
         def cost(det: HandDetection, side: str) -> float:
             track = recent.get(side)
             # An unknown track costs a neutral amount
@@ -118,6 +192,24 @@ class HandIdentityTracker:
         straight = cost(a, "left") + cost(b, "right") + order_cost(a, b)
         swapped = cost(a, "right") + cost(b, "left") + order_cost(b, a)
         return ("left", "right") if straight <= swapped else ("right", "left")
+
+    def _update_new_sides(self, kept: List[HandDetection], sides: Dict[int, str], recent: Dict[str, _Track]):
+        # A fast move alone does not make a hand new: resetting a held grip
+        # mid-swing would drop what it holds
+        def is_new(det: HandDetection) -> bool:
+            side = sides[det.index]
+            track = recent.get(side)
+            if track is None:
+                return True  # even the same hand: what it held was let go while out of view
+            if self._distance(det.wrist, track.wrist) <= self.continuity_radius:
+                return False
+            # Far from its side's track: new if it came from the other side's
+            # track, or another hand is the one continuing this side's
+            other = recent.get(other_side(side))
+            came_from_other = other is not None and self._distance(det.wrist, other.wrist) <= self.continuity_radius
+            taken = any(self._distance(k.wrist, track.wrist) <= self.continuity_radius for k in kept if k is not det)
+            return came_from_other or taken
+        self.new_sides = {sides[det.index] for det in kept if is_new(det)}
 
     def swap(self):
         """Exchange the two identities, as a manual correction."""
@@ -147,21 +239,28 @@ class HandIdentityTracker:
 
         recent = self._recent_tracks(now)
         if len(kept) == 1:
-            sides = {kept[0].index: self._assign_single(kept[0], recent)}
+            sides = {kept[0].index: self._assign_single(kept[0], recent, now)}
         elif len(kept) == 2:
             side_a, side_b = self._assign_pair(kept[0], kept[1], recent)
             sides = {kept[0].index: side_a, kept[1].index: side_b}
         else:
             sides = {}
 
+        self._update_new_sides(kept, sides, recent)
+        if len(kept) == 1:
+            self._lone = (sides[kept[0].index], now)
+        elif len(kept) == 2:
+            self._lone = None
         for det in kept:
             side = sides[det.index]
             previous = self._tracks.get(side)
-            self._tracks[side] = _Track(det.wrist, now, previous.contradictions if previous else 0)
+            # Contrary frames only count while one hand stays in view without a break
+            keep_count = previous is not None and len(kept) == 1 and side not in self.new_sides
+            self._tracks[side] = _Track(det.wrist, now, previous.contradictions if keep_count else 0)
             # A single hand that just changed side leaves its old track sitting
             # on top of it; drop that track so it cannot pull the hand back
-            other = self._tracks.get("right" if side == "left" else "left")
+            other = self._tracks.get(other_side(side))
             if len(kept) == 1 and other is not None and \
                     self._distance(det.wrist, other.wrist) <= self.continuity_radius and other.time < now:
-                del self._tracks["right" if side == "left" else "left"]
+                del self._tracks[other_side(side)]
         return sides

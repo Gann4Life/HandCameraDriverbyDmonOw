@@ -27,6 +27,10 @@ RETIRED_DEFAULTS = {
     "calibration.rotation_offset_deg.left": [0.0, 0.0, -127.0],
     "calibration.rotation_offset_deg.right": [0.0, 0.0, 127.0],
 }
+# Old built-in values that move to the current default in every preset, the
+# user's too: presets store every setting, so these were saved, never chosen.
+# switch_frames 6 is too short for a depth misread in POV, which lasts a few frames.
+RETIRED_EVERYWHERE = {"tracking.identity.switch_frames": 6}
 
 # Keys (and key prefixes, ending in ".") every preset shares
 SHARED_KEYS = (
@@ -38,7 +42,7 @@ SHARED_KEYS = (
 )
 # Settings that used to be shared: presets saved before take the value in use
 FORMERLY_SHARED = ("calibration.rotation_offset_deg.left", "calibration.rotation_offset_deg.right")
-FORMAT = 3
+FORMAT = 4
 # Top-level entries that are not settings
 META_KEYS = ("preset", "presets", "preset_format")
 
@@ -214,9 +218,12 @@ def migrate(config: Dict[str, Any]) -> None:
             _adopt_formerly_shared(config)
         if version < 3:
             _forget_retired_defaults(config)
+        if version < 4:
+            _retire_everywhere(config)
         config["preset_format"] = FORMAT
         return
     config["preset_format"] = FORMAT
+    _retire_everywhere(config)
     for key, old in RETIRED_DEFAULTS.items():
         if get_value(config, key) == old:
             set_value(config, key, get_value(DEFAULT_CONFIG, key))
@@ -254,6 +261,17 @@ def _adopt_formerly_shared(config: Dict[str, Any]) -> None:
             stored(config).pop(name, None)
         else:
             stored(config)[name] = preset
+
+
+def _retire_everywhere(config: Dict[str, Any]) -> None:
+    """Format 4: RETIRED_EVERYWHERE values move to the current default, in use and in every saved preset."""
+    for key, old in RETIRED_EVERYWHERE.items():
+        new = get_value(DEFAULT_CONFIG, key)
+        if get_value(config, key) == old:
+            set_value(config, key, new)
+        for saved in stored(config).values():
+            if saved.get(key) == old:
+                saved[key] = new
 
 
 def _forget_retired_defaults(config: Dict[str, Any]) -> None:

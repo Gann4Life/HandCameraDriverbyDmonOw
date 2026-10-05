@@ -18,7 +18,7 @@ from hand_controls import ControlMapper
 from gesture_scores import GestureClassifier, score_gestures
 from config_defaults import DEFAULT_CONFIG, DEFAULT_ROTATION_OFFSET_DEG, fill_defaults
 import presets
-from hand_identity import HandDetection, HandIdentityTracker
+from hand_identity import HandDetection, HandIdentityTracker, combine_handedness_votes, other_side
 from depth_assist import WiLoRDepthAssist
 from hand_fit import PALM, HandFitter, HandShape, bend_angles
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
@@ -215,7 +215,7 @@ class HandTracker:
         self.hand_identity = HandIdentityTracker(
             continuity_radius=float(identity_config.get('continuity_radius', 0.15)),
             memory_seconds=float(identity_config.get('memory_seconds', 0.4)),
-            switch_frames=int(identity_config.get('switch_frames', 6)),
+            switch_frames=int(identity_config.get('switch_frames', 15)),
             duplicate_radius=float(identity_config.get('duplicate_radius', 0.05)),
             user_left_is_image_left=not self.mirror_x,
             order_weight=float(identity_config.get('order_weight', 1.5)))
@@ -355,6 +355,20 @@ class HandTracker:
         self.hand_size.reset()
         self.hand_fits = {}
         print("Hands swapped")
+
+    def reset_hand(self, hand_type: str) -> None:
+        """
+        Forget one side's history when a hand is new on it (just appeared, came
+        back, or changed side), so it starts from its own first frame instead of
+        blending with whatever that side held before. The hand size history is
+        kept: it is the same person, and both hands are about the same size.
+        """
+        for filters in (self.position_filters, self.depth_filters, self.rotation_filters):
+            filters[hand_type].reset()
+        self.hand_fits.pop(hand_type, None)
+        self.last_camera_position.pop(hand_type, None)
+        self.control_mapper.reset(hand_type)
+        self.gesture_classifier.reset(hand_type)
 
     def fit_hand(self, hand_landmarks, world: List[Tuple[float, float, float]],
                  frame_width: int, frame_height: int, hand_type: Optional[str] = None) -> Optional[np.ndarray]:
@@ -658,7 +672,8 @@ class HandTracker:
         any hand rotation. The secondary signal assumes which side faces the
         camera (palm-away geometry in POV, MediaPipe's selfie label otherwise),
         so it inverts when the hand turns over; it only gets a small weight,
-        enough to decide a flat hand but never to outvote a clear curl.
+        enough to decide a flat hand. See combine_handedness_votes for when the
+        two disagree.
         """
         classification = handedness.classification[0]
         # MediaPipe labels handedness assuming a mirrored (selfie) image, so
@@ -676,7 +691,7 @@ class HandTracker:
             secondary = self.gesture_detector.handedness_evidence_palm_away(world, self.mirror_x, self.flip_z)
         else:
             secondary = mp_vote
-        return max(-1.0, min(1.0, 0.8 * curl + 0.2 * secondary))
+        return combine_handedness_votes(curl, secondary, secondary_ignores_depth=self.palm_away)
 
     def process_hand_landmarks(self, hand_landmarks, hand_world_landmarks, hand_type: str,
                                frame_width: int, frame_height: int) -> TrackedHand:
@@ -931,8 +946,12 @@ class HandTracker:
                                                                 results.multi_handedness))
             ]
             sides = self.hand_identity.assign(detections, t_tracked)
+            new_sides = self.hand_identity.new_sides
             if self.user_swap:
-                sides = {i: "right" if side == "left" else "left" for i, side in sides.items()}
+                sides = {i: other_side(side) for i, side in sides.items()}
+                new_sides = {other_side(side) for side in new_sides}
+            for side in new_sides:
+                self.reset_hand(side)
 
             for i, (hand_landmarks, hand_world) in enumerate(zip(results.multi_hand_landmarks, world_list)):
                 if i not in sides:

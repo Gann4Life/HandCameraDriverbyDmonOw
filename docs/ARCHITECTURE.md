@@ -162,6 +162,6 @@ fixed.
 - The WiLoR depth experiment (`depth_assist.py`, `gui/environments.py`, its installer and add-on) is
   planned for removal.
 - Tests cover only part of the domain code so far (`hand_features`, `hand_controls`, `gesture_scores`,
-  `utils/one_euro`, `HandData.to_protocol_string`, `utils/socket_client`) and the driver's line
+  `utils/one_euro`, `HandData.to_protocol_string`, `utils/socket_client`, `hand_identity`) and the driver's line
   parser and socket server. There are no GUI smoke tests, recorded-clip tests or tests of the
   driver's pose logic yet.
