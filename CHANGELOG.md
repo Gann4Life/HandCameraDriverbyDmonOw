@@ -65,6 +65,11 @@ What changed for users in each version. The format follows
     yourself stays.
   - A hand raised right after the other one was lowered is placed by its own shape, not by the
     side of the hand before it.
+  - Both hands no longer snap onto one real hand. A blurred hand found twice is one hand even when
+    the two copies' wrists are apart, and when the hands cross or touch, a hidden hand whose
+    skeleton jumps onto the other one is treated as lost (and keeps moving, see **Keep lost hands
+    moving for**) instead of following the hand in front. Two hands held together still count as
+    two. Not tested in VR yet.
 - A hand that appears, comes back after being lost, or changes side now starts clean on that side.
   Before, it could inherit the smoothing, trigger, grip and gesture of whatever that side held
   before, so a grip or gesture could survive a lost hand. A fast move alone doesn't reset anything,

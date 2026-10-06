@@ -1001,7 +1001,8 @@ class HandTracker:
             detections = [
                 HandDetection(i, (lm.landmark[0].x, lm.landmark[0].y),
                               self.handedness_evidence(world, handedness),
-                              handedness.classification[0].score)
+                              handedness.classification[0].score,
+                              [(p.x, p.y) for p in lm.landmark])
                 for i, (lm, world, handedness) in enumerate(zip(results.multi_hand_landmarks, world_list,
                                                                 results.multi_handedness))
             ]
