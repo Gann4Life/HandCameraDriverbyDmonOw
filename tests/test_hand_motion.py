@@ -410,3 +410,45 @@ def test_fit_curve_follows_an_arc_however_far_it_turned():
     assert curve.turn_rate == pytest.approx(speed / radius, rel=0.01)
     assert np.linalg.norm(curve.velocity) == pytest.approx(speed, rel=0.02)
     assert math.atan2(curve.velocity[1], curve.velocity[0]) == pytest.approx(angles[-1], abs=0.01)
+
+
+# track() puts the wrist at 0.6 m across the whole picture per picture width, 0.4 m from the camera
+SPAN = (0.6 / 0.4, -0.6 / 0.4)
+
+
+def test_a_resting_hand_lost_as_it_sets_off_follows_its_pixels():
+    # The frames before the loss show a hand at rest: alone, it would hold still
+    predictor = MotionPredictor(0.3)
+    last = track(predictor, [(0.0, 0.0, -0.4)] * 5)
+    assert predictor.predict("left", last + 1 / FPS).camera_position == pytest.approx((0.0, 0.0, -0.4))
+    prediction = predictor.predict("left", last + 2 / FPS, flow_offset=(0.1, -0.05), image_span=SPAN)
+    assert prediction.image_wrist == pytest.approx((0.6, 0.45))
+    assert prediction.camera_position == pytest.approx((0.06, 0.03, -0.4))
+
+
+def test_a_followed_hand_keeps_its_place_in_the_picture_as_its_depth_changes():
+    # Coming toward the camera 1 cm a frame, every frame agreeing: depth carries on
+    predictor = MotionPredictor(0.3)
+    positions = [(0.12 * (-0.4 + 0.01 * i) / -0.4, 0.0, -0.4 + 0.01 * i) for i in range(5)]
+    image = [(0.8, 0.5)] * 5
+    last = track(predictor, positions, image=image)
+    prediction = predictor.predict("left", last + 0.1, flow_offset=(0.0, 0.0), image_span=SPAN)
+    depth = prediction.camera_position[2]
+    assert depth > positions[-1][2] + 0.01
+    assert prediction.camera_position[0] == pytest.approx(positions[-1][0] * depth / positions[-1][2])
+
+
+def test_a_followed_hand_found_again_blends_from_where_it_was_followed():
+    predictor = MotionPredictor(0.3)
+    last = track(predictor, [(0.0, 0.0, -0.4)] * 5)
+    shown = predictor.predict("left", last + 1 / FPS, flow_offset=(0.1, 0.0), image_span=SPAN)
+    # A frame later it is found: the blend starts where it was last followed to
+    first, _ = predictor.observe("left", last + 2 / FPS, (0.1, 0.0, -0.4), IDENTITY, (0.67, 0.5))
+    assert first == pytest.approx(tuple(shown.camera_position), abs=1e-9)
+
+
+def test_flow_without_the_picture_span_is_not_used():
+    predictor = MotionPredictor(0.3)
+    last = track(predictor, [(0.0, 0.0, -0.4)] * 5)
+    prediction = predictor.predict("left", last + 1 / FPS, flow_offset=(0.1, 0.0))
+    assert prediction.camera_position == pytest.approx((0.0, 0.0, -0.4))
