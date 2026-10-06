@@ -32,8 +32,8 @@ What changed for users in each version. The format follows
   Fingers, trigger, grip and gesture stay as they were while the hand is lost.
 - **Follow lost hands in the picture** setting (Tracking model, the same for every preset, on by
   default). While a hand is lost, the app looks at how the picture moves where the hand was and moves
-  the hand with it. It costs about 2 ms a frame, and only while a hand is lost. Off, a lost hand
-  carries on only the way its last frames were moving.
+  the hand with it. It costs about 0.3 ms a frame, and about 2 ms while a hand is lost.
+  Off, a lost hand carries on only the way its last frames were moving.
 - **Session recording** (toolbar **Record** or F9): saves the camera video and, next to it, a data
   file with what the tracker made of every frame, to the `.output` folder next to the app. Use it to
   study a problem or replay it later. **File > Record the camera video** (on by default) turns the

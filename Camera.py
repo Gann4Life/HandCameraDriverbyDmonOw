@@ -21,7 +21,7 @@ from config_defaults import DEFAULT_CONFIG, DEFAULT_ROTATION_OFFSET_DEG, fill_de
 import presets
 from hand_identity import HandDetection, HandIdentityTracker, combine_handedness_votes, other_side
 from hand_flow import HandFlow
-from hand_motion import MotionPredictor, prediction_horizon
+from hand_motion import MotionPredictor, image_span, prediction_horizon
 from depth_assist import WiLoRDepthAssist
 from hand_fit import PALM, HandFitter, HandShape, bend_angles
 from gesture_detector import GestureDetector, quat_from_euler_deg, quat_multiply, quat_rotate
@@ -111,6 +111,8 @@ class HandTracker:
         self.socket_client = None
         self.depth_assist = None
         self.depth_source = 'mediapipe'
+        # The newest frame's size, as delivered
+        self.frame_size = (int(self.config['camera']['width']), int(self.config['camera']['height']))
 
         self.configure_view()
         self.configure_calibration()
@@ -236,7 +238,8 @@ class HandTracker:
         """(Re)create the motion predictor that keeps lost hands moving (hand_motion)."""
         self.motion = MotionPredictor(self.config['calibration']['prediction_seconds'])
         # Lost hands follow their pixels through the picture, when on
-        self.hand_flow = HandFlow() if bool(self.config['tracking'].get('optical_flow', True)) else None
+        self.hand_flow = HandFlow() if self.config['tracking']['optical_flow'] and self.motion.prediction_seconds > 0 \
+            else None
         # The last tracked frame of each hand, whose fingers and controls a predicted hand keeps
         self.last_tracked: Dict[str, TrackedHand] = {}
         self.hand_identity.memory_seconds = self.identity_memory_seconds()
@@ -784,6 +787,9 @@ class HandTracker:
             # Without world landmarks the rotation is a placeholder, not part of any motion.
             camera_position, rotation = self.motion.observe(hand_type, now, camera_position, rotation,
                                                             landmarks[0][:2])
+            if self.hand_flow is not None:
+                # Followed from the same frame the motion starts from
+                self.hand_flow.tracked(hand_type, landmarks)
         # The joints follow the filtered wrist, so the 3D preview shows what is sent
         camera_points = fitted - fitted[0] + np.array(camera_position) if fitted is not None else None
         position, rotation = self.driver_pose(hand_type, camera_position, rotation)
@@ -840,11 +846,6 @@ class HandTracker:
         position = (cx + offset[0], cy + offset[1], cz + offset[2])
         return self.index_adjustment(hand_type, position, rotation)
 
-    def image_span(self) -> Tuple[float, float]:
-        """Camera-space x and y, in metres, across the whole picture one metre from the camera."""
-        across = 2.0 * math.tan(math.radians(self.hfov_deg) / 2.0)
-        return (-across if self.mirror_x else across), -across * self.camera.height / self.camera.width
-
     def predicted_hand(self, hand_type: str, now: float) -> Optional[TrackedHand]:
         """
         A lost hand moved to where it is predicted to be (hand_motion), with the
@@ -852,10 +853,14 @@ class HandTracker:
         isn't predicted.
         """
         last = self.last_tracked.get(hand_type)
-        if last is None:
+        if last is None or not self.motion.can_predict(hand_type, now):
             return None
-        flow_offset = self.hand_flow.follow(hand_type) if self.hand_flow is not None else None
-        prediction = self.motion.predict(hand_type, now, flow_offset, self.image_span())
+        flow = None
+        if self.hand_flow is not None:
+            offset = self.hand_flow.follow(hand_type)
+            if offset is not None:
+                flow = (offset, image_span(self.hfov_deg, *self.frame_size, self.mirror_x))
+        prediction = self.motion.predict(hand_type, now, flow)
         if prediction is None:
             return None
         camera_position = tuple(float(v) for v in prediction.camera_position)
@@ -993,6 +998,8 @@ class HandTracker:
 
         t_frame = time.perf_counter()
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # As delivered: a camera may not give the size asked for
+        self.frame_size = (frame.shape[1], frame.shape[0])
         if self.hand_flow is not None:
             self.hand_flow.next_frame(frame)
         results = self.hands.process(frame_rgb)
@@ -1037,8 +1044,6 @@ class HandTracker:
                 if hand.features is not None and hand.data.is_sendable_pose():
                     # What a prediction starts from, if the hand is lost next
                     self.last_tracked[sides[i]] = hand
-                    if self.hand_flow is not None:
-                        self.hand_flow.tracked(sides[i], hand.data.landmarks)
                 if self.debug['log_gestures']:
                     print(f"{hand.data.hand_type}: {hand.data.gesture} "
                           f"T:{hand.data.trigger_value:.2f} G:{hand.data.grip_value:.2f}")

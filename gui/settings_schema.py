@@ -229,7 +229,7 @@ SETTINGS = (
             choices=((0, "Fast"), (1, "Accurate"))),
     Setting("tracking.optical_flow", "Follow lost hands in the picture", "bool", "Tracking model",
             help="A hand lost on a fast move follows how its blurred pixels move, so a swing that has "
-                 "just started carries on. Costs about 2 ms a frame while a hand is lost. Off, a lost "
+                 "just started carries on. Costs about 0.3 ms a frame, 2 ms while a hand is lost. Off, a lost "
                  "hand keeps going only the way its last frames were moving."),
     Setting("tracking.max_hands", "Hands", "int", "Tracking model", minimum=1, maximum=2, step=1,
             apply=Apply.MODEL, advanced=True),

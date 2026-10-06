@@ -48,7 +48,6 @@ class HandFlow:
         self._previous: Optional[np.ndarray] = None
         self._current: Optional[np.ndarray] = None
         self._flow: Optional[np.ndarray] = None
-        self._background = np.zeros(2)
         self._boxes: Dict[str, np.ndarray] = {}
         self._lost: Dict[str, _Lost] = {}
 
@@ -77,8 +76,10 @@ class HandFlow:
         """
         A lost hand's movement across the picture since its last tracked frame,
         in normalised image coordinates, followed up to the newest frame. Call
-        it once per frame while the hand is lost. None when there is nothing to
-        follow (no tracked frame, or no previous frame to compare with).
+        it once per frame while the hand is lost. Once the hand's box has left
+        the picture the movement holds. None when there is nothing to follow:
+        no tracked frame, or no frame before the newest one to compare with
+        (the camera just started or changed size).
         """
         lost = self._lost.get(hand)
         if lost is None:
@@ -86,6 +87,8 @@ class HandFlow:
             if box is None:
                 return None
             lost = self._lost[hand] = _Lost(box.copy(), np.zeros(2))
+        if self._previous is None or self._current is None:
+            return None
         if lost.following:
             shift = self._shift(lost.box)
             if shift is None:
@@ -96,21 +99,23 @@ class HandFlow:
         return lost.offset.copy()
 
     def _shift(self, box: np.ndarray) -> Optional[np.ndarray]:
-        """How far the pixels in box moved between the last two frames (normalised), or None if it can't tell."""
-        if self._previous is None or self._current is None:
-            return None
+        """How far the pixels in box moved between the last two frames (normalised), or None once box left the picture."""
         height, width = self._current.shape
         if self._flow is None:
             self._flow = self._dis.calc(self._previous, self._current, None)
-            # What most of the picture does: a turning head moves everything
-            self._background = np.median(self._flow.reshape(-1, 2), axis=0)
         x0, y0, x1, y1 = box * (width, height, width, height)
         area = max((x1 - x0) * (y1 - y0), 1e-9)
         cx0, cy0, cx1, cy1 = (int(round(min(max(v, 0.0), limit)))
                               for v, limit in zip((x0, y0, x1, y1), (width, height, width, height)))
         if (cx1 - cx0) * (cy1 - cy0) < MIN_VISIBLE * area or cx1 - cx0 < 2 or cy1 - cy0 < 2:
             return None
+        # What the picture around the box does: a turning head moves all of it.
+        # Measured outside the box, so a hand filling most of the picture isn't
+        # taken for the background.
+        outside = np.ones((height, width), dtype=bool)
+        outside[cy0:cy1, cx0:cx1] = False
+        background = np.median(self._flow[outside], axis=0) if outside.any() else np.zeros(2)
         vectors = self._flow[cy0:cy1, cx0:cx1].reshape(-1, 2)
-        unlike = np.linalg.norm(vectors - self._background, axis=1)
+        unlike = np.linalg.norm(vectors - background, axis=1)
         hand = vectors[unlike >= np.quantile(unlike, 1.0 - HAND_SHARE)]
         return np.median(hand, axis=0) / (width, height)

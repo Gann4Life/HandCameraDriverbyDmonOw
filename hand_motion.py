@@ -380,8 +380,15 @@ class MotionPredictor:
                 rotation = quat_multiply(quat_slerp((1.0, 0.0, 0.0, 0.0), blend.rotation_offset, weight), rotation)
         return position, rotation
 
-    def predict(self, hand: str, t: float, flow_offset: Optional[Sequence[float]] = None,
-                image_span: Optional[Sequence[float]] = None) -> Optional[Prediction]:
+    def can_predict(self, hand: str, t: float) -> bool:
+        """Whether predict() would give a pose for hand at time t."""
+        state = self._hands.get(hand)
+        if state is None or not state.history or self.prediction_seconds <= 0.0:
+            return False
+        return 0.0 < t - state.history[-1].time <= self.prediction_seconds
+
+    def predict(self, hand: str, t: float,
+                flow: Optional[Tuple[Sequence[float], Sequence[float]]] = None) -> Optional[Prediction]:
         """
         A lost hand's pose at time t, or None when there is nothing to predict:
         prediction is off, the hand has no history, or its last tracked frame is
@@ -390,26 +397,23 @@ class MotionPredictor:
         Args:
             hand: "left" or "right"
             t: Time in seconds
-            flow_offset: How far the hand's pixels moved across the picture since
-                its last tracked frame, measured by optical flow (hand_flow), in
-                normalised image coordinates. Given, the hand goes there instead
-                of along its fitted path; its depth and rotation still follow
-                the fit. None predicts from the tracked frames alone.
-            image_span: With flow_offset: camera x and y, in metres, across a
-                whole picture width and height one metre from the camera
-                (signed, as the camera maps the picture)
+            flow: (offset, span). offset: how far the hand's pixels moved across
+                the picture since its last tracked frame, measured by optical
+                flow (hand_flow), in normalised image coordinates; the hand goes
+                there instead of along its fitted path, and its depth and
+                rotation still follow the fit. span: image_span() of the
+                camera. None predicts from the tracked frames alone (or from
+                the last flow given in this gap).
         """
-        state = self._hands.get(hand)
-        if state is None or not state.history or self.prediction_seconds <= 0.0:
+        if not self.can_predict(hand, t):
             return None
-        start = state.history[-1]
-        tau = t - start.time
-        if not 0.0 < tau <= self.prediction_seconds:
-            return None
+        state = self._hands[hand]
+        tau = t - state.history[-1].time
         if state.motion is None:
             state.motion = self._fit(state.history, state.sent, self.prediction_seconds)
-        if flow_offset is not None and image_span is not None:
-            state.flow = (np.asarray(flow_offset, dtype=float)[:2], np.asarray(image_span, dtype=float)[:2])
+        if flow is not None:
+            offset, span = flow
+            state.flow = (np.asarray(offset, dtype=float)[:2], np.asarray(span, dtype=float)[:2])
         prediction = self._evaluate(state, state.motion, tau, state.flow)
         state.last_prediction = prediction
         return prediction
@@ -482,6 +486,16 @@ class MotionPredictor:
         return Prediction(camera_position=position, rotation=rotation,
                           image_wrist=motion.start.image_wrist + image_offset, image_offset=image_offset,
                           leaving=motion.leaving, path=path)
+
+
+def image_span(hfov_deg: float, width: int, height: int, mirror_x: bool) -> Tuple[float, float]:
+    """
+    Camera-space x and y, in metres, across a whole picture width and height
+    one metre from the camera: signed, as the hand fit maps the picture (OpenVR
+    axes, y up; x reversed for a mirror image).
+    """
+    across = 2.0 * math.tan(math.radians(hfov_deg) / 2.0)
+    return (-across if mirror_x else across), -across * height / width
 
 
 def _moved_across(start: np.ndarray, depth: float, image_offset: np.ndarray, span: np.ndarray) -> np.ndarray:

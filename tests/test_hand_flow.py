@@ -84,14 +84,14 @@ def test_nothing_to_follow_without_a_tracked_frame_or_a_frame_before():
     first = HandFlow()
     first.tracked("left", landmarks(200))
     first.next_frame(frame(200))
-    assert first.follow("left") == pytest.approx((0.0, 0.0))  # one frame only: nothing to compare
+    assert first.follow("left") is None         # one frame only: nothing to compare
 
 
 def test_a_new_picture_size_starts_over():
     flow = HandFlow()
     lost_after(flow, 200)
     flow.next_frame(cv2.resize(frame(212), (320, 240)))
-    assert flow.follow("left") == pytest.approx((0.0, 0.0))
+    assert flow.follow("left") is None
 
 
 def test_a_hand_tracked_again_is_followed_from_its_new_place():
@@ -102,3 +102,13 @@ def test_a_hand_tracked_again_is_followed_from_its_new_place():
     flow.tracked("left", landmarks(212))
     flow.next_frame(frame(212))
     assert flow.follow("left") == pytest.approx((0.0, 0.0), abs=1 / WIDTH)
+
+
+def test_two_lost_hands_are_followed_each_on_its_own():
+    flow = HandFlow()
+    flow.next_frame(frame(100))
+    flow.tracked("left", landmarks(100))
+    flow.tracked("right", [(x + 400 / WIDTH, y, z) for x, y, z in landmarks(100)])  # still background there
+    flow.next_frame(frame(112))
+    assert flow.follow("left")[0] == pytest.approx(12 / WIDTH, rel=0.3)
+    assert flow.follow("right") == pytest.approx((0.0, 0.0), abs=2 / WIDTH)
