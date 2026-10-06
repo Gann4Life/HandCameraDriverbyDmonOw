@@ -19,6 +19,7 @@ changes it alone.
 
 ```
 camera ─► CameraCapture ─► MediaPipe ─► HandIdentityTracker ─► hand_fit / pose ─► filters ─► hand_motion (MotionPredictor)
+                                              │                                              ▲ hand_flow (lost hands)
                                               │
                                               └─► hand_features ─► ControlMapper / gesture_scores
                                                                           │
@@ -38,7 +39,7 @@ Each layer may only import from the layers below it.
 | GUI | `gui/` (including `gui/environments.py`, which checks the add-ons) | Engine, config, presets, `addons`. Never MediaPipe or the socket directly |
 | Engine | `Camera.HandTracker`, `gui/tracker_worker.py` (thread wrapper), `depth_assist`, `session_recorder` | Config, domain, I/O |
 | Config | `config_defaults`, `presets`, `builtin_presets`, `utils/config_utils` | Plain dicts. `config_defaults` collects each domain module's own `DEFAULTS` |
-| Domain | `hand_features`, `hand_controls`, `gesture_scores`, `hand_fit`, `hand_identity`, `hand_motion`, `hand_data`, `gesture_detector` (legacy) | Pure math and numpy. No Qt, no OpenCV windows, no sockets, no files |
+| Domain | `hand_features`, `hand_controls`, `gesture_scores`, `hand_fit`, `hand_identity`, `hand_motion`, `hand_flow` (uses OpenCV for the flow, no windows), `hand_data`, `gesture_detector` (legacy) | Pure math and numpy. No Qt, no OpenCV windows, no sockets, no files |
 | I/O and platform | `utils/camera_utils`, `utils/socket_client`, `utils/win_process`, `addons` | The outside world |
 | Utilities | `utils/one_euro`, `utils/hand_size`, `version` | Nothing project-specific |
 

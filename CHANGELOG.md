@@ -23,9 +23,17 @@ What changed for users in each version. The format follows
   carries on but a misread depth doesn't. A wrist that jumps across the picture for one frame (a
   misdetection, or the hands swapped) is ignored, including a jump from a hand that was resting.
   A hand that is about to leave the picture stops sooner, and one that was barely moving stays put.
-  A hand lost right as it starts a fast swing can still pause, because the frames before the loss
-  show it barely moving. When the hand is found again, it blends to its real pose over 0.1 s.
+  A hand lost right as it starts a fast swing used to pause, because the frames before the loss
+  show it barely moving. With **Follow lost hands in the picture** on (below), it follows the blurred
+  hand's pixels across the picture instead, so that swing carries on. Depth and rotation still come
+  from the hand's last frames. In our recorded sessions, it ended about a sixth closer across the
+  picture to where the hand came back; depth was unchanged. It has not been
+  tested in VR yet. When the hand is found again, it blends to its real pose over 0.1 s.
   Fingers, trigger, grip and gesture stay as they were while the hand is lost.
+- **Follow lost hands in the picture** setting (Tracking model, the same for every preset, on by
+  default). While a hand is lost, the app looks at how the picture moves where the hand was and moves
+  the hand with it. It costs about 2 ms a frame, and only while a hand is lost. Off, a lost hand
+  carries on only the way its last frames were moving.
 - **Session recording** (toolbar **Record** or F9): saves the camera video and, next to it, a data
   file with what the tracker made of every frame, to the `.output` folder next to the app. Use it to
   study a problem or replay it later. **File > Record the camera video** (on by default) turns the
