@@ -1,13 +1,28 @@
 """HandIdentityTracker: which side each detected hand is reported as."""
+import math
+
 import pytest
 
-from hand_identity import CLEAR_CURL_VOTE, HandDetection, HandIdentityTracker, combine_handedness_votes
+from hand_identity import (CLEAR_CURL_VOTE, ON_TOP_DISTANCE, SAME_HAND_DISTANCE, HandDetection, HandIdentityTracker,
+                           combine_handedness_votes, skeleton_distance)
 
 LEFT_VOTE, RIGHT_VOTE = 0.9, -0.9
+HAND_SIZE = 0.15
 
 
-def det(index=0, x=0.5, y=0.5, evidence=0.0, score=0.9) -> HandDetection:
-    return HandDetection(index, (x, y), evidence, score)
+def skeleton(x, y, mirrored=False):
+    """21 image points of an open hand, wrist at (x, y), fingers fanned upward, about HAND_SIZE across."""
+    points = [(x, y)]
+    for finger in range(5):
+        angle = math.radians((60 - 30 * finger) * (-1 if mirrored else 1))
+        for joint in range(1, 5):
+            reach = HAND_SIZE * (0.25 + 0.17 * joint)
+            points.append((x + reach * math.sin(angle) * 0.6, y - reach * math.cos(angle)))
+    return points
+
+
+def det(index=0, x=0.5, y=0.5, evidence=0.0, score=0.9, points=False) -> HandDetection:
+    return HandDetection(index, (x, y), evidence, score, skeleton(x, y) if points else None)
 
 
 def frames(tracker, hands, start=0.0, count=30, fps=30):
@@ -210,3 +225,64 @@ def test_a_prediction_running_onto_the_visible_hand_leaves_the_lost_track_where_
     tracker.follow("left", (0.68, 0.5))
     # The right hand, alone in view, keeps its side
     assert tracker.assign([det(1, x=0.7, evidence=0.0)], 1.05) == {1: "right"}
+
+
+def test_one_skeleton_fitted_twice_is_one_hand_even_with_its_wrists_apart():
+    # A blurred hand fitted twice: the same fingers, the copy's wrist misplaced
+    # further than duplicate_radius, its vote for the other side
+    copy_points = skeleton(0.5, 0.6)
+    copy_points[0] = (0.57, 0.6)
+    copy = HandDetection(1, copy_points[0], RIGHT_VOTE, 0.8, copy_points)
+    assert skeleton_distance(skeleton(0.5, 0.6), copy_points) < SAME_HAND_DISTANCE
+    tracker = HandIdentityTracker()
+    for i in range(10):
+        sides = tracker.assign([det(0, x=0.5, y=0.6, evidence=LEFT_VOTE, points=True), copy], i / 30)
+        assert sides == {0: "left"}
+    assert not tracker.has_track("right")
+
+
+def test_two_hands_brought_together_both_stay():
+    # Fists or palms side by side lie on top of each other, but each continues its own track
+    tracker = HandIdentityTracker()
+    for i in range(20):
+        gap = 0.3 - i * (0.3 - 0.07) / 19
+        hands = [det(0, x=0.5 - gap / 2, evidence=LEFT_VOTE, points=True),
+                 det(1, x=0.5 + gap / 2, evidence=RIGHT_VOTE, points=True)]
+        assert tracker.assign(hands, i / 30) == {0: "left", 1: "right"}
+    assert SAME_HAND_DISTANCE < skeleton_distance(hands[0].points, hands[1].points) < ON_TOP_DISTANCE
+
+
+def test_a_hand_moving_fast_onto_the_other_one_stays():
+    # A clap: the left hand covers most of the gap in one frame, its wrist now
+    # nearer the right hand's track than its own
+    tracker = HandIdentityTracker()
+    frames(tracker, [det(0, x=0.43, evidence=LEFT_VOTE, points=True), det(1, x=0.57, evidence=RIGHT_VOTE, points=True)])
+    left = det(0, x=0.51, evidence=LEFT_VOTE, points=True)
+    right = det(1, x=0.57, evidence=RIGHT_VOTE, points=True)
+    assert SAME_HAND_DISTANCE < skeleton_distance(left.points, right.points) < ON_TOP_DISTANCE
+    assert tracker.assign([left, right], 1.0) == {0: "left", 1: "right"}
+
+
+def test_a_copy_fitted_as_the_other_hand_is_still_on_top():
+    # Any point may match any other, so a mirror image of the same hand is no distance away
+    assert skeleton_distance(skeleton(0.5, 0.5), skeleton(0.5, 0.5, mirrored=True)) < SAME_HAND_DISTANCE
+
+
+def test_a_hidden_hand_whose_skeleton_jumps_onto_the_other_hand_is_lost():
+    # The hands cross: the left one hides behind the right, and MediaPipe fits its
+    # slot onto the right hand in one frame, still voting left
+    tracker = HandIdentityTracker()
+    frames(tracker, [det(0, x=0.3, evidence=LEFT_VOTE, points=True), det(1, x=0.6, evidence=RIGHT_VOTE, points=True)])
+    copy = det(0, x=0.53, evidence=LEFT_VOTE, score=0.95, points=True)
+    right = det(1, x=0.6, evidence=RIGHT_VOTE, points=True)
+    assert SAME_HAND_DISTANCE < skeleton_distance(copy.points, right.points) < ON_TOP_DISTANCE
+    assert tracker.assign([copy, right], 1.0) == {1: "right"}
+
+
+def test_a_hand_appearing_next_to_the_only_tracked_one_is_kept():
+    # No other track to have jumped from: a second hand raised next to the first
+    tracker = HandIdentityTracker()
+    frames(tracker, [det(0, x=0.4, evidence=LEFT_VOTE, points=True)])
+    sides = tracker.assign([det(0, x=0.4, evidence=LEFT_VOTE, points=True),
+                            det(1, x=0.47, evidence=RIGHT_VOTE, points=True)], 1.0)
+    assert sides == {0: "left", 1: "right"}
