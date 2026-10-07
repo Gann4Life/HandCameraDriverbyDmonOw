@@ -147,6 +147,8 @@ class _HandState:
     # from the measurement while a returning hand blends in
     sent: Optional[Tuple[np.ndarray, Quaternion]] = None
     motion: Optional[_Motion] = None
+    # The optical flow the last prediction followed, if any (hand_flow): see predict()
+    flow: Optional[Tuple[np.ndarray, np.ndarray]] = None
     last_prediction: Optional[Prediction] = None
     blend: Optional[_Blend] = None
 
@@ -348,10 +350,11 @@ class MotionPredictor:
         if state.last_prediction is not None:
             # Blend in from where the hand would be shown now, so the first frame back doesn't stall
             shown = self._evaluate(state, state.motion,
-                                   min(t - state.history[-1].time, self.prediction_seconds))
+                                   min(t - state.history[-1].time, self.prediction_seconds), state.flow)
             state.blend = _Blend(t, shown.camera_position - position,
                                  quat_multiply(shown.rotation, _conjugate(sample.rotation)))
         state.motion = None
+        state.flow = None
         state.last_prediction = None
         # Measured frames only, gap or not: a fit to what was sent would take the
         # blend's own correction for motion, and errors would build up over
@@ -377,22 +380,41 @@ class MotionPredictor:
                 rotation = quat_multiply(quat_slerp((1.0, 0.0, 0.0, 0.0), blend.rotation_offset, weight), rotation)
         return position, rotation
 
-    def predict(self, hand: str, t: float) -> Optional[Prediction]:
+    def can_predict(self, hand: str, t: float) -> bool:
+        """Whether predict() would give a pose for hand at time t."""
+        state = self._hands.get(hand)
+        if state is None or not state.history or self.prediction_seconds <= 0.0:
+            return False
+        return 0.0 < t - state.history[-1].time <= self.prediction_seconds
+
+    def predict(self, hand: str, t: float,
+                flow: Optional[Tuple[Sequence[float], Sequence[float]]] = None) -> Optional[Prediction]:
         """
         A lost hand's pose at time t, or None when there is nothing to predict:
         prediction is off, the hand has no history, or its last tracked frame is
         more than prediction_seconds old (it holds where it was last sent).
+
+        Args:
+            hand: "left" or "right"
+            t: Time in seconds
+            flow: (offset, span). offset: how far the hand's pixels moved across
+                the picture since its last tracked frame, measured by optical
+                flow (hand_flow), in normalised image coordinates; the hand goes
+                there instead of along its fitted path, and its depth and
+                rotation still follow the fit. span: image_span() of the
+                camera. None predicts from the tracked frames alone (or from
+                the last flow given in this gap).
         """
-        state = self._hands.get(hand)
-        if state is None or not state.history or self.prediction_seconds <= 0.0:
+        if not self.can_predict(hand, t):
             return None
-        start = state.history[-1]
-        tau = t - start.time
-        if not 0.0 < tau <= self.prediction_seconds:
-            return None
+        state = self._hands[hand]
+        tau = t - state.history[-1].time
         if state.motion is None:
             state.motion = self._fit(state.history, state.sent, self.prediction_seconds)
-        prediction = self._evaluate(state, state.motion, tau)
+        if flow is not None:
+            offset, span = flow
+            state.flow = (np.asarray(offset, dtype=float)[:2], np.asarray(span, dtype=float)[:2])
+        prediction = self._evaluate(state, state.motion, tau, state.flow)
         state.last_prediction = prediction
         return prediction
 
@@ -449,13 +471,44 @@ class MotionPredictor:
         return _Motion(start=start, position=sent[0], rotation=sent[1], step=float(s[1] - s[0]), table=table,
                        path_ahead=start.image_wrist + image_offsets[ahead], leaving=leaving)
 
-    def _evaluate(self, state: _HandState, motion: _Motion, tau: float) -> Prediction:
+    def _evaluate(self, state: _HandState, motion: _Motion, tau: float,
+                  flow: Optional[Tuple[np.ndarray, np.ndarray]] = None) -> Prediction:
         camera_offset, image_offset, turn = motion.at(tau)
         rotation = quat_multiply(quat_from_rotation_vector(turn), motion.rotation)
-        path = np.vstack([np.array([s.image_wrist for s in state.history]), motion.path_ahead])
-        return Prediction(camera_position=motion.position + camera_offset, rotation=rotation,
+        position = motion.position + camera_offset
+        history = np.array([s.image_wrist for s in state.history])
+        if flow is None:
+            path = np.vstack([history, motion.path_ahead])
+        else:
+            image_offset, span = flow
+            position = _moved_across(motion.position, position[2], image_offset, span)
+            path = np.vstack([history, motion.start.image_wrist + image_offset])
+        return Prediction(camera_position=position, rotation=rotation,
                           image_wrist=motion.start.image_wrist + image_offset, image_offset=image_offset,
                           leaving=motion.leaving, path=path)
+
+
+def image_span(hfov_deg: float, width: int, height: int, mirror_x: bool) -> Tuple[float, float]:
+    """
+    Camera-space x and y, in metres, across a whole picture width and height
+    one metre from the camera: signed, as the hand fit maps the picture (OpenVR
+    axes, y up; x reversed for a mirror image).
+    """
+    across = 2.0 * math.tan(math.radians(hfov_deg) / 2.0)
+    return (-across if mirror_x else across), -across * height / width
+
+
+def _moved_across(start: np.ndarray, depth: float, image_offset: np.ndarray, span: np.ndarray) -> np.ndarray:
+    """
+    Camera position of a wrist that started at start, now at camera z depth,
+    whose picture moved by image_offset: x and y keep their place in the
+    picture as the depth changes, plus the offset at the new depth.
+    """
+    if start[2] > -1e-3 or depth > -1e-3:
+        return np.array((start[0], start[1], depth))   # at or behind the camera: no picture to follow
+    distance = -depth
+    across = start[:2] * (depth / start[2]) + image_offset * span * distance
+    return np.array((across[0], across[1], depth))
 
 
 def _without_jump(history: List[_Sample]) -> List[_Sample]:

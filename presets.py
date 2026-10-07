@@ -40,7 +40,7 @@ SHARED_KEYS = (
     "camera.device_id", "camera.width", "camera.height", "camera.fps", "camera.backend",
     "camera.hfov_deg", "camera.stall_timeout", "camera.reconnect_timeout",
     "tracking.max_hands", "tracking.detection_confidence", "tracking.tracking_confidence",
-    "tracking.model_complexity", "tracking.depth_source", "tracking.depth_assist.",
+    "tracking.model_complexity", "tracking.optical_flow", "tracking.depth_source", "tracking.depth_assist.",
     "network.", "process.", "debug.", "addons.", "recording.",
 )
 # Settings that used to be shared: presets saved before take the value in use
