@@ -13,15 +13,15 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
-# Skeleton overlap (see skeleton_overlap) under which two detections are one hand
+# Skeleton distance (see skeleton_distance) under which two detections are one hand
 # seen twice, whatever came before. On the recorded sessions every pair this
 # close was one blurred hand fitted twice; two real hands held together (palms
 # side by side, fists touching) started at about 0.14.
-SAME_HAND_OVERLAP = 0.12
+SAME_HAND_DISTANCE = 0.12
 # Under this, two detections lie on top of each other: one hand, or two hands
 # held together or crossing. Telling them apart takes the tracks (see
 # HandIdentityTracker._copy_on_other_hand).
-ON_TOP_OVERLAP = 0.35
+ON_TOP_DISTANCE = 0.35
 
 
 @dataclass
@@ -31,12 +31,12 @@ class HandDetection:
     wrist: Tuple[float, float]    # normalised image coordinates
     evidence: float               # handedness vote in [-1, 1]; > 0 means left
     score: float                  # MediaPipe's detection confidence
-    # All its landmarks in normalised image coordinates (x, y), wrist first;
-    # None compares wrists only
+    # All its landmarks in normalised image coordinates (x, y), wrist first
+    # (points[0] is wrist); None compares wrists only
     points: Optional[Sequence[Sequence[float]]] = None
 
 
-def skeleton_overlap(a: Sequence[Sequence[float]], b: Sequence[Sequence[float]]) -> float:
+def skeleton_distance(a: Sequence[Sequence[float]], b: Sequence[Sequence[float]]) -> float:
     """
     How far apart two hands' landmarks lie, in hand sizes: the mean distance
     from each point to the nearest point of the other hand, both ways. Any
@@ -100,7 +100,7 @@ class HandIdentityTracker:
                 before a continuing hand is allowed to change side
             duplicate_radius: Detections whose wrists are closer than this are
                 one hand seen twice (and so are skeletons that overlap, see
-                SAME_HAND_OVERLAP)
+                SAME_HAND_DISTANCE)
             strong_evidence: |evidence| above which a vote counts as a contradiction
             user_left_is_image_left: Which image side the user's left hand is on
             order_weight: How strongly two separated hands are assigned by
@@ -277,7 +277,7 @@ class HandIdentityTracker:
         if self._distance(a.wrist, b.wrist) <= self.duplicate_radius:
             return True
         return a.points is not None and b.points is not None and \
-            skeleton_overlap(a.points, b.points) < SAME_HAND_OVERLAP
+            skeleton_distance(a.points, b.points) < SAME_HAND_DISTANCE
 
     def _without_copies(self, detections: List[HandDetection], recent: Dict[str, _Track]) -> List[HandDetection]:
         """This frame's hands without the copies of another: at most two, most confident first."""
@@ -304,14 +304,19 @@ class HandIdentityTracker:
         """
         if a.points is None or b.points is None or len(recent) < 2:
             return None
-        if skeleton_overlap(a.points, b.points) >= ON_TOP_OVERLAP:
+        if skeleton_distance(a.points, b.points) >= ON_TOP_DISTANCE:
             return None
         def nearest(det: HandDetection) -> str:
             return min(recent, key=lambda side: self._distance(det.wrist, recent[side].wrist))
         side = nearest(a)
         if nearest(b) != side:
             return None
-        return max((a, b), key=lambda det: self._distance(det.wrist, recent[side].wrist))
+        copy = max((a, b), key=lambda det: self._distance(det.wrist, recent[side].wrist))
+        # Still within reach of the other track: a hand moving fast toward the
+        # other one (a clap, both hands on one object), not a copy
+        if self._distance(copy.wrist, recent[other_side(side)].wrist) <= self.continuity_radius:
+            return None
+        return copy
 
     def assign(self, detections: List[HandDetection], now: float) -> Dict[int, str]:
         """

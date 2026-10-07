@@ -3,8 +3,8 @@ import math
 
 import pytest
 
-from hand_identity import (CLEAR_CURL_VOTE, ON_TOP_OVERLAP, SAME_HAND_OVERLAP, HandDetection, HandIdentityTracker,
-                           combine_handedness_votes, skeleton_overlap)
+from hand_identity import (CLEAR_CURL_VOTE, ON_TOP_DISTANCE, SAME_HAND_DISTANCE, HandDetection, HandIdentityTracker,
+                           combine_handedness_votes, skeleton_distance)
 
 LEFT_VOTE, RIGHT_VOTE = 0.9, -0.9
 HAND_SIZE = 0.15
@@ -233,7 +233,7 @@ def test_one_skeleton_fitted_twice_is_one_hand_even_with_its_wrists_apart():
     copy_points = skeleton(0.5, 0.6)
     copy_points[0] = (0.57, 0.6)
     copy = HandDetection(1, copy_points[0], RIGHT_VOTE, 0.8, copy_points)
-    assert skeleton_overlap(skeleton(0.5, 0.6), copy_points) < SAME_HAND_OVERLAP
+    assert skeleton_distance(skeleton(0.5, 0.6), copy_points) < SAME_HAND_DISTANCE
     tracker = HandIdentityTracker()
     for i in range(10):
         sides = tracker.assign([det(0, x=0.5, y=0.6, evidence=LEFT_VOTE, points=True), copy], i / 30)
@@ -249,7 +249,23 @@ def test_two_hands_brought_together_both_stay():
         hands = [det(0, x=0.5 - gap / 2, evidence=LEFT_VOTE, points=True),
                  det(1, x=0.5 + gap / 2, evidence=RIGHT_VOTE, points=True)]
         assert tracker.assign(hands, i / 30) == {0: "left", 1: "right"}
-    assert SAME_HAND_OVERLAP < skeleton_overlap(hands[0].points, hands[1].points) < ON_TOP_OVERLAP
+    assert SAME_HAND_DISTANCE < skeleton_distance(hands[0].points, hands[1].points) < ON_TOP_DISTANCE
+
+
+def test_a_hand_moving_fast_onto_the_other_one_stays():
+    # A clap: the left hand covers most of the gap in one frame, its wrist now
+    # nearer the right hand's track than its own
+    tracker = HandIdentityTracker()
+    frames(tracker, [det(0, x=0.43, evidence=LEFT_VOTE, points=True), det(1, x=0.57, evidence=RIGHT_VOTE, points=True)])
+    left = det(0, x=0.51, evidence=LEFT_VOTE, points=True)
+    right = det(1, x=0.57, evidence=RIGHT_VOTE, points=True)
+    assert SAME_HAND_DISTANCE < skeleton_distance(left.points, right.points) < ON_TOP_DISTANCE
+    assert tracker.assign([left, right], 1.0) == {0: "left", 1: "right"}
+
+
+def test_a_copy_fitted_as_the_other_hand_is_still_on_top():
+    # Any point may match any other, so a mirror image of the same hand is no distance away
+    assert skeleton_distance(skeleton(0.5, 0.5), skeleton(0.5, 0.5, mirrored=True)) < SAME_HAND_DISTANCE
 
 
 def test_a_hidden_hand_whose_skeleton_jumps_onto_the_other_hand_is_lost():
@@ -259,7 +275,7 @@ def test_a_hidden_hand_whose_skeleton_jumps_onto_the_other_hand_is_lost():
     frames(tracker, [det(0, x=0.3, evidence=LEFT_VOTE, points=True), det(1, x=0.6, evidence=RIGHT_VOTE, points=True)])
     copy = det(0, x=0.53, evidence=LEFT_VOTE, score=0.95, points=True)
     right = det(1, x=0.6, evidence=RIGHT_VOTE, points=True)
-    assert SAME_HAND_OVERLAP < skeleton_overlap(copy.points, right.points) < ON_TOP_OVERLAP
+    assert SAME_HAND_DISTANCE < skeleton_distance(copy.points, right.points) < ON_TOP_DISTANCE
     assert tracker.assign([copy, right], 1.0) == {1: "right"}
 
 
