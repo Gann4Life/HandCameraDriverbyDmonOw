@@ -279,7 +279,10 @@ def _adopt_formerly_shared(config: Dict[str, Any]) -> None:
 
 
 def _retire_everywhere(config: Dict[str, Any], retired: Dict[str, Any]) -> None:
-    """Retired values (one format's RETIRED_EVERYWHERE) move to the current default, in use and in every saved preset."""
+    """
+    Retired values (one format's RETIRED_EVERYWHERE) move to the current
+    default, in use and in every saved preset.
+    """
     for key, old in retired.items():
         new = get_value(DEFAULT_CONFIG, key)
         if get_value(config, key) == old:

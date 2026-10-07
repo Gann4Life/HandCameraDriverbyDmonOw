@@ -46,7 +46,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "mode": "one_euro",
             "position": {"min_cutoff": 1.0, "beta": 1.5},
             # Beta 4 and d_cutoff 3 (the speed estimate keeps up with a punch's
-            # start): on recorded sessions depth lagged about a third less while
+            # start): on recorded Facing sessions depth lagged about a third less while
             # moving, with the same jitter at rest, and position and rotation
             # lagged and jittered slightly less
             "depth": {"min_cutoff": 0.3, "beta": 4.0},
