@@ -15,7 +15,7 @@ Two programs that talk over a local socket:
   two controllers (Touch or Index profile, with finger curls for the Index skeleton).
 
 The line format between them is a contract, documented in [PROTOCOL.md](PROTOCOL.md). Neither side
-changes it alone.
+changes it alone. How each tracking step works, and why, is in [TRACKING.md](TRACKING.md).
 
 ```
 camera ─► CameraCapture ─► MediaPipe ─► HandIdentityTracker ─► hand_fit / pose ─► filters ─► hand_motion (MotionPredictor)
