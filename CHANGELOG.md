@@ -43,6 +43,12 @@ What changed for users in each version. The format follows
   keep up, frames are left out of the video, not delayed.
 
 ### Changed
+- With **Adaptive (One Euro)** smoothing (Facing), hands follow fast moves sooner, most of all a
+  punch toward the camera: **Depth responsiveness** goes from 2 to 4 and **Speed cutoff** from 1 to
+  3. In our recorded sessions, depth trailed the hand by about a third less while it moved, with no
+  more jitter when still; position and rotation lagged and jittered slightly less too. Every preset
+  with the old values moves to the new ones, yours included; a value you changed yourself stays.
+  Not tested in VR yet.
 - A hand out of view keeps its side and its state (smoothing, grip, gesture) for at least as long as
   it is predicted, so a hand back within up to 1 s, depending on the setting above, is still the same
   hand.

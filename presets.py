@@ -29,8 +29,13 @@ RETIRED_DEFAULTS = {
 }
 # Old built-in values that move to the current default in every preset, the
 # user's too: presets store every setting, so these were saved, never chosen.
-# switch_frames 6 is too short for a depth misread in POV, which lasts a few frames.
-RETIRED_EVERYWHERE = {"tracking.identity.switch_frames": 6}
+# Keyed by the format that retires them.
+RETIRED_EVERYWHERE = {
+    # switch_frames 6 is too short for a depth misread in POV, which lasts a few frames
+    4: {"tracking.identity.switch_frames": 6},
+    # The old One Euro values lagged a punch's depth by centimetres more (see config_defaults)
+    6: {"calibration.filter.depth.beta": 2.0, "calibration.filter.d_cutoff": 1.0},
+}
 # Settings that no longer exist; format 5 removes them from the config and every
 # preset. Steady grip/trigger snapped to 0/1; grip now holds by itself.
 REMOVED_KEYS = ("gestures.grip_latch", "gestures.trigger_latch")
@@ -45,7 +50,7 @@ SHARED_KEYS = (
 )
 # Settings that used to be shared: presets saved before take the value in use
 FORMERLY_SHARED = ("calibration.rotation_offset_deg.left", "calibration.rotation_offset_deg.right")
-FORMAT = 5
+FORMAT = 6
 # Top-level entries that are not settings
 META_KEYS = ("preset", "presets", "preset_format")
 
@@ -222,13 +227,17 @@ def migrate(config: Dict[str, Any]) -> None:
         if version < 3:
             _forget_retired_defaults(config)
         if version < 4:
-            _retire_everywhere(config)
+            _retire_everywhere(config, RETIRED_EVERYWHERE[4])
         if version < 5:
             _remove_keys(config)
+        if version < 6:
+            _retire_everywhere(config, RETIRED_EVERYWHERE[6])
+            _drop_unchanged_builtins(config)
         config["preset_format"] = FORMAT
         return
     config["preset_format"] = FORMAT
-    _retire_everywhere(config)
+    for retired in RETIRED_EVERYWHERE.values():
+        _retire_everywhere(config, retired)
     _remove_keys(config)
     for key, old in RETIRED_DEFAULTS.items():
         if get_value(config, key) == old:
@@ -269,9 +278,12 @@ def _adopt_formerly_shared(config: Dict[str, Any]) -> None:
             stored(config)[name] = preset
 
 
-def _retire_everywhere(config: Dict[str, Any]) -> None:
-    """Format 4: RETIRED_EVERYWHERE values move to the current default, in use and in every saved preset."""
-    for key, old in RETIRED_EVERYWHERE.items():
+def _retire_everywhere(config: Dict[str, Any], retired: Dict[str, Any]) -> None:
+    """
+    Retired values (one format's RETIRED_EVERYWHERE) move to the current
+    default, in use and in every saved preset.
+    """
+    for key, old in retired.items():
         new = get_value(DEFAULT_CONFIG, key)
         if get_value(config, key) == old:
             set_value(config, key, new)

@@ -599,9 +599,9 @@ class HandTracker:
         if self.filter_mode == 'one_euro':
             def make(kind, cls, defaults):
                 s = dict(defaults, **config.get(kind, {}))
-                return {h: cls(s['min_cutoff'], s['beta'], config.get('d_cutoff', 1.0)) for h in hands}
+                return {h: cls(s['min_cutoff'], s['beta'], config.get('d_cutoff', 3.0)) for h in hands}
             self.position_filters = make('position', OneEuroFilter, {'min_cutoff': 1.0, 'beta': 1.5})
-            self.depth_filters = make('depth', OneEuroFilter, {'min_cutoff': 0.3, 'beta': 2.0})
+            self.depth_filters = make('depth', OneEuroFilter, {'min_cutoff': 0.3, 'beta': 4.0})
             self.rotation_filters = make('rotation', QuaternionOneEuroFilter, {'min_cutoff': 1.0, 'beta': 0.5})
         elif self.filter_mode == 'ema':
             follow = dict({'position': 0.7, 'depth': 0.35, 'rotation': 0.5}, **config.get('ema', {}))
