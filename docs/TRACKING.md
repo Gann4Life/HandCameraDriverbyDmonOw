@@ -107,9 +107,17 @@ every image-based cue is flipped back for a mirrored frame.
 Deciding left and right from scratch every frame makes hands swap whenever the vote flickers. Here
 the identity follows **continuity first**, and the vote only overrides it when it persists.
 
-1. **Duplicates.** MediaPipe sometimes reports one hand twice. Detections with wrists closer than
-   `duplicate_radius` (5 % of the picture) are one hand, and the more confident copy is kept. At
-   most two hands are kept.
+1. **Duplicates.** MediaPipe sometimes fits one blurred hand twice, or moves a hidden hand onto the
+   hand in front when the hands cross. Two detections are compared by how far each one's joints are
+   from the other's nearest joints, in hand sizes (`skeleton_overlap`).
+   - Wrists closer than `duplicate_radius` (5 % of the picture), or skeletons overlapping under
+     0.12 hand sizes: one hand. The more confident copy is kept.
+   - Overlapping under 0.35, while both continue the same remembered hand and the other remembered
+     hand was elsewhere: the one further from that hand is a copy and is dropped. The hidden hand
+     is then lost and predicted (⑪) instead of following the hand in front.
+   - Two real hands held together continue their own remembered hands, so both stay.
+
+   At most two hands are kept.
 2. **One hand in view.** It keeps the side of the remembered hand whose wrist is within
    `continuity_radius` (15 % of the picture) of it. A lone hand keeps its side even when it jumps
    further, as with a turning head camera, unless a strong vote says otherwise after a break. A
@@ -219,7 +227,7 @@ Each frame's measurement jitters. A plain average removes jitter but makes the h
 every move. The **One Euro filter** (Casiez, Roussel and Vogel, CHI 2012) adapts:
 
 ```
-speed   = smoothed rate of change of the signal   (smoothed at d_cutoff Hz)
+speed   = smoothed rate of change of the signal   (smoothed at d_cutoff, 3 Hz)
 cutoff  = min_cutoff + beta × speed
 output  = low-pass of the signal at that cutoff
 ```
@@ -233,7 +241,7 @@ Each hand gets three filters:
 | Filter | Rest cutoff | `beta` | Why separate |
 |---|---|---|---|
 | Position across the picture (x, y) | 1 Hz | 1.5 | Accurate, so lightly smoothed |
-| Depth (z) | 0.3 Hz | 2 | Far noisier (see ⑤), so smoothed much harder at rest |
+| Depth (z) | 0.3 Hz | 4 | Far noisier (see ⑤), so smoothed much harder at rest; a high `beta` lets it catch up once the hand moves |
 | Rotation (quaternion) | 1 Hz | 0.5 | Smoothed on the sphere of rotations; q and −q are kept on the same side so it never averages across the flip |
 
 The x and y filter treats the position as one point, with one speed, not as two unrelated
@@ -243,8 +251,10 @@ of being kept, since a kept one would freeze the hand. The POV presets use a sim
 filter (EMA, a fixed fraction of each new frame) instead. **none** turns smoothing off, for
 comparison.
 
-Smoothing has a price: while a hand moves, the filtered depth trails the measured one by a few
-centimetres, most visibly on a punch toward or away from the camera.
+Smoothing has a price: while a hand moves, the filtered depth trails the measured one, most
+visibly on a punch toward or away from the camera. With a speed estimate smoothed at 1 Hz it
+reacted too late to a punch's start, and depth trailed by 3.6 to 3.9 cm on recorded Facing
+sessions. At 3 Hz, with `beta` 4, it trails by 2.4 to 2.6 cm, with the same steadiness at rest.
 
 ## ⑧ Motion memory
 
